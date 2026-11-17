@@ -1,5 +1,6 @@
 #include <QCoreApplication>
 #include <QFileInfo>
+#include <QNetworkInterface>
 #include <QProcess>
 
 #include <QThread>
@@ -10,6 +11,7 @@
 #include "logger.h"
 #include "ikev2VpnProtocolWindows.h"
 #include "core/utils/utilities.h"
+#include "core/utils/networkUtilities.h"
 #include "core/protocols/protocolUtils.h"
 
 
@@ -158,7 +160,7 @@ void Ikev2Protocol::newConnectionStateEventReceived(UINT unMsg, tagRASCONNSTATE 
         break;
 
     case RASCS_Connected: // = RASCS_DONE:
-        setConnectionState(Vpn::ConnectionState::Connected);
+        QMetaObject::invokeMethod(this, &Ikev2Protocol::onConnected, Qt::QueuedConnection);
         //qDebug()<<__FUNCTION__ << __LINE__;
         break;
     case RASCS_Disconnected:
@@ -176,10 +178,66 @@ void Ikev2Protocol::readIkev2Configuration(const QJsonObject &configuration)
     m_config = configuration.value(ProtocolUtils::key_proto_config_data(Proto::Ikev2)).toObject();
 }
 
+void Ikev2Protocol::onConnected()
+{
+    if (!QVariant(m_rawConfig.value(configKey::killSwitchOption).toString()).toBool()) {
+        setConnectionState(Vpn::ConnectionState::Connected);
+        return;
+    }
+
+    int vpnAdapterIndex = -1;
+    for (const QNetworkInterface &netInterface : QNetworkInterface::allInterfaces()) {
+        if (netInterface.humanReadableName() == tunnelName()) {
+            vpnAdapterIndex = netInterface.index();
+        }
+    }
+    if (vpnAdapterIndex == -1) {
+        qCritical() << "Failed to get IKEv2 adapter index for killswitch";
+        stop();
+        setLastError(ErrorCode::InternalError);
+        return;
+    }
+
+    QJsonObject config = m_rawConfig;
+    config.insert("vpnServer", m_serverAddress);
+    config.insert("vpnAdapterIndex", vpnAdapterIndex);
+
+    const bool killSwitchEnabled = IpcClient::withInterface([&](QSharedPointer<IpcInterfaceReplica> iface) {
+        auto enableKillSwitch = iface->enableKillSwitch(config, vpnAdapterIndex);
+        if (!enableKillSwitch.waitForFinished() || !enableKillSwitch.returnValue()) {
+            return false;
+        }
+        auto enablePeerTraffic = iface->enablePeerTraffic(config);
+        return enablePeerTraffic.waitForFinished() && enablePeerTraffic.returnValue();
+    }, []() { return false; });
+
+    if (!killSwitchEnabled) {
+        qCritical() << "Failed to enable killswitch for IKEv2";
+        stop();
+        setLastError(ErrorCode::InternalError);
+        return;
+    }
+
+    setConnectionState(Vpn::ConnectionState::Connected);
+}
+
 ErrorCode Ikev2Protocol::start()
 {
     QByteArray cert = QByteArray::fromBase64(m_config[configKey::cert].toString().toUtf8());
     setConnectionState(Vpn::ConnectionState::Connecting);
+
+    m_serverAddress = NetworkUtilities::getIPAddress(m_config[configKey::hostName].toString());
+    const ErrorCode allowServerError = IpcClient::withInterface([&](QSharedPointer<IpcInterfaceReplica> iface) {
+        auto reply = iface->addKillSwitchAllowedRange(QStringList(m_serverAddress));
+        if (!reply.waitForFinished(1000) || !reply.returnValue()) {
+            return ErrorCode::AmneziaServiceConnectionFailed;
+        }
+        return ErrorCode::NoError;
+    }, []() { return ErrorCode::AmneziaServiceConnectionFailed; });
+    if (allowServerError != ErrorCode::NoError) {
+        setLastError(allowServerError);
+        return allowServerError;
+    }
 
     QTemporaryFile * certFile = new QTemporaryFile;
     certFile->setAutoRemove(false);

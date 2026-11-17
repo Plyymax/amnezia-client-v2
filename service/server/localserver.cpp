@@ -50,6 +50,10 @@ LocalServer::LocalServer(QObject *parent) : QObject(parent),
     }
 
     m_networkWatcher.initialize();
+    connect(&m_networkWatcher, &NetworkWatcher::networkChanged, this,
+            []() { qInfo() << "[service] network change detected, the client will reconnect"; });
+    connect(&m_networkWatcher, &NetworkWatcher::wakeup, this,
+            []() { qInfo() << "[service] system wakeup detected, the client will reconnect"; });
     connect(&m_networkWatcher, &NetworkWatcher::networkChanged, &m_ipcServer, &IpcServer::networkChanged);
     connect(&m_networkWatcher, &NetworkWatcher::wakeup, &m_ipcServer, &IpcServer::wakeup);
     KillSwitch::instance()->init();

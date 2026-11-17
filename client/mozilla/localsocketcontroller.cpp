@@ -214,6 +214,7 @@ void LocalSocketController::activate(const QJsonObject &rawConfig) {
       }
 
       if (splitTunnelType == 1) {
+          json.insert("vpnOnlyDomains", rawConfig.value(amnezia::configKey::splitTunnelDomains));
           for (auto v : splitTunnelSites) {
               QString ipRange = v.toString();
               if (ipRange.split('/').size() > 1){
@@ -441,6 +442,7 @@ void LocalSocketController::parseCommand(const QByteArray& command) {
   }
 
   if (type == "disconnected") {
+    logger.warning() << "The daemon reported the tunnel as disconnected";
     disconnectInternal();
     return;
   }

@@ -17,6 +17,11 @@ namespace amnezia
 
 using namespace ContainerEnumNS;
 
+bool NativeServerConfig::isFromSubscription() const
+{
+    return !subscriptionId.isEmpty();
+}
+
 bool NativeServerConfig::hasContainers() const
 {
     return !containers.isEmpty();
@@ -80,7 +85,14 @@ QJsonObject NativeServerConfig::toJson() const
     if (!dns2.isEmpty()) {
         obj[configKey::dns2] = dns2;
     }
-    
+
+    if (isFromSubscription()) {
+        obj[configKey::subscriptionId] = subscriptionId;
+        obj[configKey::subscriptionName] = subscriptionName;
+        obj[configKey::subscriptionUrl] = subscriptionUrl;
+        obj[configKey::subscriptionLink] = subscriptionLink;
+    }
+
     return obj;
 }
 
@@ -107,6 +119,11 @@ NativeServerConfig NativeServerConfig::fromJson(const QJsonObject& json)
     
     config.dns1 = json.value(configKey::dns1).toString();
     config.dns2 = json.value(configKey::dns2).toString();
+
+    config.subscriptionId = json.value(configKey::subscriptionId).toString();
+    config.subscriptionName = json.value(configKey::subscriptionName).toString();
+    config.subscriptionUrl = json.value(configKey::subscriptionUrl).toString();
+    config.subscriptionLink = json.value(configKey::subscriptionLink).toString();
     
     if (config.displayName.isEmpty()) {
         config.displayName = config.description.isEmpty() ? config.hostName : config.description;

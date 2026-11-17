@@ -241,7 +241,8 @@ QString SecureServersRepository::nextAvailableServerName() const
     return candidate;
 }
 
-QString SecureServersRepository::addServer(const QString &serverId, const QJsonObject &serverJson, serverConfigUtils::ConfigType kind)
+QString SecureServersRepository::addServer(const QString &serverId, const QJsonObject &serverJson, serverConfigUtils::ConfigType kind,
+                                           int position)
 {
     const QString id = normalizedOrGeneratedServerId(serverId);
     if (m_serverJsonById.contains(id) || kind == serverConfigUtils::ConfigType::Invalid) {
@@ -254,7 +255,11 @@ QString SecureServersRepository::addServer(const QString &serverId, const QJsonO
     }
     m_serverJsonById.insert(id, embedStorageServerId(id, strippedJson));
 
-    m_orderedServerIds.append(id);
+    if (position >= 0 && position < m_orderedServerIds.size()) {
+        m_orderedServerIds.insert(position, id);
+    } else {
+        m_orderedServerIds.append(id);
+    }
 
     if (m_defaultServerId.isEmpty()) {
         m_defaultServerId = id;

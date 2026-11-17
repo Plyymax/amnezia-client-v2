@@ -23,7 +23,13 @@ struct NativeServerConfig {
     DockerContainer defaultContainer;
     QString dns1;
     QString dns2;
-    
+
+    QString subscriptionId;
+    QString subscriptionName;
+    QString subscriptionUrl;
+    QString subscriptionLink;
+
+    bool isFromSubscription() const;
     bool hasContainers() const;
     ContainerConfig containerConfig(DockerContainer container) const;
 

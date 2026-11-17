@@ -5,6 +5,7 @@
 
 #include "core/controllers/ipSplitTunnelingController.h"
 #include "ui/models/ipSplitTunnelingModel.h"
+#include "ui/models/ipSplitTunnelingPresetsModel.h"
 
 class IpSplitTunnelingUiController : public QObject
 {
@@ -12,6 +13,7 @@ class IpSplitTunnelingUiController : public QObject
 
     Q_PROPERTY(int routeMode READ getRouteMode WRITE setRouteMode NOTIFY routeModeChanged)
     Q_PROPERTY(bool isSplitTunnelingEnabled READ isSplitTunnelingEnabled NOTIFY isSplitTunnelingEnabledChanged)
+    Q_PROPERTY(IpSplitTunnelingPresetsModel *presetsModel READ presetsModel CONSTANT)
 
 public:
     explicit IpSplitTunnelingUiController(IpSplitTunnelingController* ipSplitTunnelingController,
@@ -25,9 +27,12 @@ public slots:
     void exportSites(const QString &fileName);
     void toggleSplitTunneling(bool enabled);
     void setRouteMode(int routeMode);
+    void addPreset(const QString &presetId);
+    void removePreset(const QString &presetId);
 
     int getRouteMode() const;
     bool isSplitTunnelingEnabled() const;
+    IpSplitTunnelingPresetsModel *presetsModel() const;
 
     void updateModel();
 
@@ -41,6 +46,9 @@ signals:
 private:
     IpSplitTunnelingController* m_ipSplitTunnelingController;
     IpSplitTunnelingModel* m_ipSplitTunnelingModel;
+    IpSplitTunnelingPresetsModel *m_presetsModel;
+
+    void updatePresetsModel();
 };
 
 #endif // IPSPLITTUNNELINGUICONTROLLER_H

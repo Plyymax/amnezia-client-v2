@@ -73,6 +73,44 @@ ctest --test-dir build/client/tests --output-on-failure
 Qt 6.10 or later and Conan are required; native dependencies are built by Conan
 from `recipes/` on the first configure.
 
+### Windows
+
+- **Toolchain.** Install Qt the way CI does, into `%USERPROFILE%\Qt`, where
+  `deploy\build.bat` looks for it, with the modules from
+  `.github/workflows/deploy.yml`:
+
+  ```bash
+  pip install "aqtinstall==3.3.0" "conan==2.28.0"
+  aqt install-qt windows desktop 6.10.1 win64_msvc2022_64 -O "$USERPROFILE/Qt" -m qtremoteobjects qt5compat qtshadertools qthttpserver qtwebsockets
+  aqt install-tool windows desktop tools_ifw -O "$USERPROFILE/Qt"
+  ```
+
+  Run `aqt` from a writable folder: it writes `aqtinstall.log` to the current
+  directory. `conan` must be on `PATH`.
+- **Build with `deploy\build.bat`**, not a hand-made Ninja configure. Ninja
+  appends `/subsystem:console` after the project's `/SUBSYSTEM:WINDOWS`, and
+  the app then opens a console window next to the UI. `build.bat` uses the
+  Visual Studio generator, as CI does. When `vswhere` does not find Build
+  Tools, call `vcvars64.bat` first: `build.bat` skips its own lookup when
+  `VCINSTALLDIR` is set.
+- **Do not run `AmneziaVPN.exe` from the build directory.** The Qt DLLs, the
+  service and its binaries are not next to it. `deploy\build.bat --installer ifw`
+  produces `deploy\build\AmneziaVPN_<version>_windows_x64.exe`; for a folder
+  without an installer, `cmake --install <build> --prefix <absolute path>`
+  (Qt's deploy step rejects a relative prefix). Connecting also needs the
+  service, which only the installer registers.
+- **`Could not resolve runtime dependencies: VCRUNTIME140_1.dll`** during
+  install or `cpack`: CMake looks only next to the binary and in the Conan
+  package folders. Copy `vcruntime140.dll`, `vcruntime140_1.dll` and
+  `msvcp140.dll` from the MSVC `Redist\MSVC\<version>\x64\Microsoft.VC*.CRT`
+  folder next to `AmneziaVPN.exe` and `AmneziaVPN-service.exe` in the build
+  tree, then rerun `cpack -G IFW -D QTIFWDIR=<Qt>/Tools/QtInstallerFramework/<version>`
+  from `deploy\build`.
+- **A local installer has no gateway secrets** (`PROD_AGW_PUBLIC_KEY_B64` and
+  the other variables `client/CMakeLists.txt` reads from the environment), so
+  Amnezia Premium and Free do not work in it. It installs over the official app
+  of the same version.
+
 ## Repository Rules
 
 These three come first. Each one has been asked for repeatedly.

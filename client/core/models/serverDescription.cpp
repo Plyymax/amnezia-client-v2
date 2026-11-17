@@ -16,15 +16,55 @@ using namespace amnezia;
 namespace
 {
 
+bool isVpnContainer(DockerContainer container)
+{
+    return ContainerUtils::containerService(container) == ServiceType::Vpn || container == DockerContainer::SSXray;
+}
+
 bool computeHasInstalledVpnContainers(const QMap<DockerContainer, ContainerConfig> &containers)
 {
     for (auto it = containers.begin(); it != containers.end(); ++it) {
-        const DockerContainer container = it.key();
-        if (ContainerUtils::containerService(container) == ServiceType::Vpn || container == DockerContainer::SSXray) {
+        if (isVpnContainer(it.key())) {
             return true;
         }
     }
     return false;
+}
+
+QString containerDisplayName(DockerContainer container, const QMap<DockerContainer, ContainerConfig> &containers)
+{
+    QString containerName = ContainerUtils::containerHumanNames().value(container);
+    QString protocolVersion;
+
+    if (ContainerUtils::isAwgContainer(container)) {
+        const auto it = containers.constFind(container);
+        if (it != containers.cend()) {
+            if (const AwgProtocolConfig *awg = it->getAwgProtocolConfig()) {
+                QString version = awg->clientProtocolVersion();
+                if (version.isEmpty()) {
+                    version = awg->serverProtocolVersion();
+                }
+                protocolVersion = AwgProtocolConfig::protocolVersionString(version);
+                if (container == DockerContainer::Awg && !awg->serverConfig.isThirdPartyConfig) {
+                    containerName = QStringLiteral("AmneziaWG Legacy");
+                }
+            }
+        }
+    }
+
+    return containerName + protocolVersion;
+}
+
+QString getVpnProtocolNames(const QMap<DockerContainer, ContainerConfig> &containers)
+{
+    QStringList names;
+    for (auto it = containers.cbegin(); it != containers.cend(); ++it) {
+        if (isVpnContainer(it.key())) {
+            names.append(containerDisplayName(it.key(), containers));
+        }
+    }
+    names.removeDuplicates();
+    return names.join(QStringLiteral(", "));
 }
 
 template <typename T>
@@ -35,6 +75,7 @@ ServerDescription buildBaseDescription(const T &server)
     row.defaultContainer = server.defaultContainer;
     row.primaryDnsIsAmnezia = (server.dns1 == protocols::dns::amneziaDnsIp);
     row.hasInstalledVpnContainers = computeHasInstalledVpnContainers(server.containers);
+    row.protocolNames = getVpnProtocolNames(server.containers);
     return row;
 }
 
@@ -57,26 +98,7 @@ QString getBaseDescription(const QMap<DockerContainer, ContainerConfig> &contain
 
 QString getProtocolName(DockerContainer defaultContainer, const QMap<DockerContainer, ContainerConfig> &containers)
 {
-    QString containerName = ContainerUtils::containerHumanNames().value(defaultContainer);
-    QString protocolVersion;
-
-    if (ContainerUtils::isAwgContainer(defaultContainer)) {
-        const auto it = containers.constFind(defaultContainer);
-        if (it != containers.cend()) {
-            if (const AwgProtocolConfig *awg = it->getAwgProtocolConfig()) {
-                QString version = awg->clientProtocolVersion();
-                if (version.isEmpty()) {
-                    version = awg->serverProtocolVersion();
-                }
-                protocolVersion = AwgProtocolConfig::protocolVersionString(version);
-                if (defaultContainer == DockerContainer::Awg && !awg->serverConfig.isThirdPartyConfig) {
-                    containerName = QStringLiteral("AmneziaWG Legacy");
-                }
-            }
-        }
-    }
-
-    return containerName + protocolVersion + QStringLiteral(" | ");
+    return containerDisplayName(defaultContainer, containers) + QStringLiteral(" | ");
 }
 
 } // namespace
@@ -127,6 +149,7 @@ ServerDescription buildServerDescription(const NativeServerConfig &server, bool 
 
     row.serverName = server.displayName;
     row.baseDescription = getBaseDescription(server.containers, isAmneziaDnsEnabled, row.hasWriteAccess, row.primaryDnsIsAmnezia);
+    row.subscriptionId = server.subscriptionId;
 
     const QString protocolName = getProtocolName(server.defaultContainer, server.containers);
     row.expandedServerDescription = row.baseDescription + row.hostName;

@@ -10,6 +10,7 @@
 #include "ipc.h"
 
 #include <QCryptographicHash>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QTimer>
 #include <QJsonObject>
@@ -20,11 +21,102 @@
 
 #include <exception>
 
+#ifdef Q_OS_WIN
+    #include <winsock2.h>
+    #include <ws2ipdef.h>
+    #include <iphlpapi.h>
+#endif
+
 #ifdef Q_OS_MACOS
 static const QString tunName = "utun22";
 #else
 static const QString tunName = "tun2";
 #endif
+
+namespace
+{
+#ifdef Q_OS_WIN
+constexpr int trafficPollIntervalMs = 10000;
+
+bool readTunCounters(quint64 &receivedBytes, quint64 &sentBytes)
+{
+    MIB_IF_ROW2 row {};
+    if (ConvertInterfaceAliasToLuid(reinterpret_cast<const wchar_t *>(tunName.utf16()), &row.InterfaceLuid) != NO_ERROR
+        || GetIfEntry2(&row) != NO_ERROR) {
+        return false;
+    }
+    receivedBytes = row.InOctets;
+    sentBytes = row.OutOctets;
+    return true;
+}
+#endif
+
+QJsonObject withXrayResolver(QJsonObject streamSettings)
+{
+    QJsonObject sockopt = streamSettings.value("sockopt").toObject();
+    if (!sockopt.contains("domainStrategy")) {
+        sockopt.insert("domainStrategy", "UseIP");
+        streamSettings.insert("sockopt", sockopt);
+    }
+    return streamSettings;
+}
+
+template<typename PinHost>
+QJsonObject withPinnedDownloadSettings(QJsonObject xhttpSettings, const PinHost &pinHost)
+{
+    const QJsonObject downloadSettings = xhttpSettings.value("downloadSettings").toObject();
+    if (downloadSettings.isEmpty()) {
+        return xhttpSettings;
+    }
+
+    pinHost(downloadSettings.value("address").toString());
+    xhttpSettings.insert("downloadSettings", withXrayResolver(downloadSettings));
+    return xhttpSettings;
+}
+
+// Once the tunnel is up the system resolver points into it, so xray must not resolve its own server through it
+void pinServerAddress(QJsonObject &xrayConfig, const QString &hostName, const QString &address)
+{
+    QJsonObject dns = xrayConfig.value("dns").toObject();
+    QJsonObject hosts = dns.value("hosts").toObject();
+    const auto pinHost = [&](const QString &host) {
+        if (host.isEmpty() || hosts.contains(host) || !QHostAddress(host).isNull()) {
+            return;
+        }
+        const QString ip = host == hostName ? address : NetworkUtilities::getIPAddress(host);
+        if (!ip.isEmpty()) {
+            hosts.insert(host, ip);
+        }
+    };
+    pinHost(hostName);
+
+    QJsonArray outbounds = xrayConfig.value("outbounds").toArray();
+    for (int i = 0; i < outbounds.size(); ++i) {
+        QJsonObject outbound = outbounds.at(i).toObject();
+        const QJsonObject settings = outbound.value("settings").toObject();
+        if (!settings.contains("vnext") && !settings.contains("servers")) {
+            continue;
+        }
+
+        QJsonObject streamSettings = withXrayResolver(outbound.value("streamSettings").toObject());
+        if (streamSettings.contains("xhttpSettings")) {
+            QJsonObject xhttpSettings = withPinnedDownloadSettings(streamSettings.value("xhttpSettings").toObject(), pinHost);
+            if (xhttpSettings.contains("extra")) {
+                xhttpSettings.insert("extra", withPinnedDownloadSettings(xhttpSettings.value("extra").toObject(), pinHost));
+            }
+            streamSettings.insert("xhttpSettings", xhttpSettings);
+        }
+        outbound.insert("streamSettings", streamSettings);
+        outbounds[i] = outbound;
+    }
+    xrayConfig.insert("outbounds", outbounds);
+
+    if (!hosts.isEmpty()) {
+        dns.insert("hosts", hosts);
+        xrayConfig.insert("dns", dns);
+    }
+}
+} // namespace
 
 XrayProtocol::XrayProtocol(const QJsonObject &configuration, QObject *parent) : VpnProtocol(configuration, parent)
 {
@@ -57,6 +149,17 @@ XrayProtocol::XrayProtocol(const QJsonObject &configuration, QObject *parent) : 
         qWarning() << "Xray config string is not a valid JSON object";
         m_xrayConfig = {};
     }
+
+#ifdef Q_OS_WIN
+    m_trafficTimer.setInterval(trafficPollIntervalMs);
+    connect(&m_trafficTimer, &QTimer::timeout, this, [this]() {
+        quint64 receivedBytes = 0;
+        quint64 sentBytes = 0;
+        if (readTunCounters(receivedBytes, sentBytes)) {
+            setBytesChanged(receivedBytes, sentBytes);
+        }
+    });
+#endif
 }
 
 XrayProtocol::~XrayProtocol()
@@ -83,6 +186,12 @@ ErrorCode XrayProtocol::start()
     m_socksUser = creds.username;
     m_socksPassword = creds.password;
     m_socksPort = creds.port;
+
+    pinServerAddress(m_xrayConfig, m_rawConfig.value(amnezia::configKey::hostName).toString(), m_remoteAddress);
+
+    m_xrayConfig.insert(amnezia::protocols::xray::logBlock,
+                        QJsonObject { { amnezia::protocols::xray::logLevel, "warning" }, { "access", "none" } });
+    qInfo() << "[xray] starting the core, log level warning, access log off";
 
     QString xrayConfigStr = QJsonDocument(m_xrayConfig).toJson(QJsonDocument::Compact);
     if (xrayConfigStr.isEmpty()) {
@@ -113,11 +222,11 @@ void XrayProtocol::stop()
 
     qDebug() << "XrayProtocol::stop()";
 
-    IpcClient::withInterface([this](QSharedPointer<IpcInterfaceReplica> iface) {
-        auto disableKillSwitch = iface->disableKillSwitch();
-        if (!disableKillSwitch.waitForFinished() || !disableKillSwitch.returnValue())
-            qWarning() << "Failed to disable killswitch";
+#ifdef Q_OS_WIN
+    m_trafficTimer.stop();
+#endif
 
+    IpcClient::withInterface([this](QSharedPointer<IpcInterfaceReplica> iface) {
         auto StartRoutingIpv6 = iface->StartRoutingIpv6();
         if (!StartRoutingIpv6.waitForFinished() || !StartRoutingIpv6.returnValue())
             qWarning() << "Failed to start routing ipv6";
@@ -162,6 +271,7 @@ void XrayProtocol::stop()
 ErrorCode XrayProtocol::startTun2Socks()
 {
     m_tun2socksProcess = IpcClient::CreatePrivilegedProcess();
+    m_tun2socksOutputTail.clear();
     if (!m_tun2socksProcess->waitForSource()) {
         return ErrorCode::AmneziaServiceConnectionFailed;
     }
@@ -185,6 +295,7 @@ ErrorCode XrayProtocol::startTun2Socks()
                 }
 
                 const QString line = readAllStandardError.returnValue();
+                appendTun2SocksOutput(line);
 
                 if (!line.contains("[TCP]") && !line.contains("[UDP]"))
                     qDebug() << "[tun2socks]:" << line;
@@ -193,10 +304,15 @@ ErrorCode XrayProtocol::startTun2Socks()
                     disconnect(m_tun2socksProcess.data(), &IpcProcessInterfaceReplica::readyReadStandardOutput, this, nullptr);
 
                     if (ErrorCode res = setupRouting(); res != ErrorCode::NoError) {
+                        qCritical() << "[xray] routing setup failed, stopping";
                         stop();
                         setLastError(res);
                     } else {
+                        qInfo() << "[xray] tun2socks is up and routing is set";
                         setConnectionState(Vpn::ConnectionState::Connected);
+#ifdef Q_OS_WIN
+                        m_trafficTimer.start();
+#endif
                     }
                 }
             },
@@ -211,7 +327,9 @@ ErrorCode XrayProtocol::startTun2Socks()
                 if (m_tun2socksProcess) {
                     auto readOut = m_tun2socksProcess->readAllStandardOutput();
                     if (readOut.waitForFinished()) {
-                        resourceBusy = readOut.returnValue().contains("resource busy");
+                        const QString output = readOut.returnValue();
+                        resourceBusy = output.contains("resource busy");
+                        appendTun2SocksOutput(output);
                     }
                 }
 
@@ -232,11 +350,10 @@ ErrorCode XrayProtocol::startTun2Socks()
 
                 m_tun2socksRetryCount = 0;
 
-                if (exitStatus == QProcess::ExitStatus::CrashExit) {
-                    qCritical() << "Tun2socks process crashed!";
-                } else {
-                    qCritical() << QString("Tun2socks process was closed with %1 exit code").arg(exitCode);
-                }
+                qCritical().noquote() << QString("[tun2socks] process %1 with exit code %2, last output:\n%3")
+                                                 .arg(exitStatus == QProcess::ExitStatus::CrashExit ? "crashed" : "exited")
+                                                 .arg(exitCode)
+                                                 .arg(m_tun2socksOutputTail.join('\n'));
                 stop();
                 setLastError(ErrorCode::Tun2SockExecutableCrashed);
             },
@@ -244,6 +361,14 @@ ErrorCode XrayProtocol::startTun2Socks()
 
     m_tun2socksProcess->start();
     return ErrorCode::NoError;
+}
+
+void XrayProtocol::appendTun2SocksOutput(const QString &output)
+{
+    m_tun2socksOutputTail += output.split('\n', Qt::SkipEmptyParts);
+    if (m_tun2socksOutputTail.size() > tun2socksOutputTailLines) {
+        m_tun2socksOutputTail = m_tun2socksOutputTail.mid(m_tun2socksOutputTail.size() - tun2socksOutputTailLines);
+    }
 }
 
 ErrorCode XrayProtocol::setupRouting()
@@ -279,17 +404,19 @@ ErrorCode XrayProtocol::setupRouting()
 #endif
                 const bool killSwitchEnabled = QVariant(m_rawConfig.value(configKey::killSwitchOption).toString()).toBool();
                 if (killSwitchEnabled) {
-                    if (vpnAdapterIndex != -1) {
-                        QJsonObject config = m_rawConfig;
-                        config.insert("vpnServer", m_remoteAddress);
+                    if (vpnAdapterIndex == -1) {
+                        qCritical() << "Failed to get vpnAdapterIndex for killswitch";
+                        return ErrorCode::InternalError;
+                    }
 
-                        auto enableKillSwitch = IpcClient::Interface()->enableKillSwitch(config, vpnAdapterIndex);
-                        if (!enableKillSwitch.waitForFinished() || !enableKillSwitch.returnValue()) {
-                            qCritical() << "Failed to enable killswitch";
-                            return ErrorCode::InternalError;
-                        }
-                    } else
-                        qWarning() << "Failed to get vpnAdapterIndex. Killswitch disabled";
+                    QJsonObject config = m_rawConfig;
+                    config.insert("vpnServer", m_remoteAddress);
+
+                    auto enableKillSwitch = IpcClient::Interface()->enableKillSwitch(config, vpnAdapterIndex);
+                    if (!enableKillSwitch.waitForFinished() || !enableKillSwitch.returnValue()) {
+                        qCritical() << "Failed to enable killswitch";
+                        return ErrorCode::InternalError;
+                    }
                 }
 
                 if (m_routeMode == amnezia::RouteMode::VpnAllSites) {
@@ -322,8 +449,12 @@ ErrorCode XrayProtocol::setupRouting()
                         qCritical() << "Failed to enable peer traffic";
                         return ErrorCode::InternalError;
                     }
-                } else
+                } else if (killSwitchEnabled) {
+                    qCritical() << "Failed to get adapter indexes for killswitch";
+                    return ErrorCode::InternalError;
+                } else {
                     qWarning() << "Failed to get adapter indexes. Split-tunneling disabled";
+                }
 #endif
                 return ErrorCode::NoError;
             },

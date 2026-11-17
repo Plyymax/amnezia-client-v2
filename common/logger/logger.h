@@ -19,7 +19,9 @@ public:
     static bool init(bool isServiceLogger);
     static void deInit();
 
+    static bool isEnabled();
     static bool setServiceLogsEnabled(bool enabled);
+    static QString maskSensitive(const QString &message);
 
     static void clearLogs(bool isServiceLogger);
     static void clearServiceLogs();

@@ -130,7 +130,6 @@ bool WireguardUtilsWindows::addInterface(const InterfaceConfig& config) {
     // Enable the windows firewall
     NET_IFINDEX ifindex;
     ConvertInterfaceLuidToIndex(&luid, &ifindex);
-    m_firewall->allowAllTraffic();
     m_firewall->enableInterface(ifindex);
   }
 
@@ -143,7 +142,6 @@ bool WireguardUtilsWindows::deleteInterface() {
     m_routeMonitor->deleteLater();
   }
 
-  m_firewall->disableKillSwitch();
   m_tunnel.stop();
   return true;
 }
@@ -207,9 +205,6 @@ bool WireguardUtilsWindows::deletePeer(const InterfaceConfig& config) {
     m_routeMonitor->deleteExclusionRoute(IPAddress(config.m_serverIpv4AddrIn));
     m_routeMonitor->deleteExclusionRoute(IPAddress(config.m_serverIpv6AddrIn));
   }
-
-  // Disable the windows firewall for this peer.
-  m_firewall->disablePeerTraffic(config.m_serverPublicKey);
 
   QString message;
   QTextStream out(&message);

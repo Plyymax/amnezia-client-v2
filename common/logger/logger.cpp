@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QJsonDocument>
 #include <QMetaEnum>
+#include <QRegularExpression>
 #include <QStandardPaths>
 
 #include "core/utils/utilities.h"
@@ -18,6 +19,56 @@ QFile Logger::m_file;
 QTextStream Logger::m_textStream;
 QString Logger::m_logFileName = QString("%1.log").arg(APPLICATION_NAME);
 QString Logger::m_serviceLogFileName = QString("%1.log").arg(SERVICE_NAME);
+
+namespace
+{
+    bool isPublicIpv4(const QStringList &octets)
+    {
+        const int a = octets.at(0).toInt();
+        const int b = octets.at(1).toInt();
+        if (a == 0 || a == 10 || a == 127 || a >= 224) {
+            return false;
+        }
+        if ((a == 169 && b == 254) || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168) || (a == 100 && b >= 64 && b <= 127)) {
+            return false;
+        }
+        return true;
+    }
+
+    QString maskDomain(const QString &domain)
+    {
+        const QString tld = domain.section('.', -1);
+        return domain.left(1) + "***." + tld;
+    }
+
+    QString maskHost(const QString &host)
+    {
+        static const QRegularExpression ipv4(QStringLiteral(R"(^\d{1,3}(\.\d{1,3}){3}$)"));
+        if (ipv4.match(host).hasMatch()) {
+            const QStringList octets = host.split('.');
+            return isPublicIpv4(octets) ? QString("%1.*.*.%2").arg(octets.first(), octets.last()) : host;
+        }
+        return host.contains('.') ? maskDomain(host) : host;
+    }
+
+    template<typename Replacer>
+    QString replaceAll(const QString &input, const QRegularExpression &re, Replacer replacer)
+    {
+        QString result;
+        qsizetype last = 0;
+        auto it = re.globalMatch(input);
+        while (it.hasNext()) {
+            const QRegularExpressionMatch match = it.next();
+            result += input.mid(last, match.capturedStart() - last);
+            result += replacer(match);
+            last = match.capturedEnd();
+        }
+        if (last == 0) {
+            return input;
+        }
+        return result + input.mid(last);
+    }
+}
 
 void messageHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
 {
@@ -45,6 +96,39 @@ void messageHandler(QtMsgType type, const QMessageLogContext &context, const QSt
     } // Brackets are needed to ensure the destructor of LogStreamer is called before abort()
         abort();
     }
+}
+
+QString Logger::maskSensitive(const QString &message)
+{
+    static const QRegularExpression shareLink(
+            QStringLiteral(R"(\b(vless|vmess|trojan|ssr?|hysteria2?|hy2|tuic|vpn|wireguard|awg)://[^\s"'<>]+)"),
+            QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression url(
+            QStringLiteral(R"(\b(https?|socks5h?|socks)://([^\s/@"'<>]+@)?([^\s/?#:"'<>\[\]]+)(:\d+)?((?:[/?#][^\s"'<>]*)?))"),
+            QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression uuid(
+            QStringLiteral(R"(\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b)"));
+    static const QRegularExpression base64Key(QStringLiteral(R"((?<![A-Za-z0-9+/])[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=(?![A-Za-z0-9+/=]))"));
+    static const QRegularExpression domainWithPort(
+            QStringLiteral(R"(\b((?:[A-Za-z0-9-]+\.)+(?!(?:qml|cpp|h|hpp|c|mm|js|go|kt|java|swift|py)\b)[A-Za-z]{2,63}):(\d{1,5})\b)"));
+    static const QRegularExpression lookupDomain(QStringLiteral(R"(\b(lookup|resolve[ds]?) ((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,63})\b)"));
+    static const QRegularExpression ipv4(QStringLiteral(R"((?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(/\d{1,2})?(?!\d|\.\d))"));
+
+    QString result = replaceAll(message, shareLink, [](const QRegularExpressionMatch &m) { return m.captured(1) + "://***"; });
+    result = replaceAll(result, url, [](const QRegularExpressionMatch &m) {
+        return m.captured(1) + "://" + (m.captured(2).isEmpty() ? QString() : QStringLiteral("***@")) + maskHost(m.captured(3))
+                + m.captured(4) + (m.captured(5).isEmpty() ? QString() : QStringLiteral("/***"));
+    });
+    result = replaceAll(result, uuid, [](const QRegularExpressionMatch &) { return QStringLiteral("<uuid>"); });
+    result = replaceAll(result, base64Key, [](const QRegularExpressionMatch &) { return QStringLiteral("<key>"); });
+    result = replaceAll(result, domainWithPort,
+                        [](const QRegularExpressionMatch &m) { return maskDomain(m.captured(1)) + ":" + m.captured(2); });
+    result = replaceAll(result, lookupDomain,
+                        [](const QRegularExpressionMatch &m) { return m.captured(1) + " " + maskDomain(m.captured(2)); });
+    return replaceAll(result, ipv4, [](const QRegularExpressionMatch &m) {
+        const bool isNetworkPrefix = !m.captured(2).isEmpty() && m.captured(1).endsWith(".0");
+        return isNetworkPrefix ? m.captured() : maskHost(m.captured(1)) + m.captured(2);
+    });
 }
 
 Logger &Logger::Instance()
@@ -80,6 +164,11 @@ void Logger::deInit()
 {
     m_textStream.setDevice(nullptr);
     m_file.close();
+}
+
+bool Logger::isEnabled()
+{
+    return m_file.isOpen();
 }
 
 bool Logger::setServiceLogsEnabled(bool enabled)
@@ -184,7 +273,7 @@ Logger::LogStreamer::~LogStreamer()
 
     const QString message = QString("%1 %2 %3 %4 : %5")
                                     .arg(QDateTime::currentDateTimeUtc().toString("[yyyy-MM-dd hh:mm:ss.zzzZ]"),
-                                         logLevelString, APPLICATION_NAME, m_logger->className(), m_data->m_buffer.trimmed());
+                                         logLevelString, APPLICATION_NAME, m_logger->className(), maskSensitive(m_data->m_buffer.trimmed()));
 
     if (m_file.isOpen()) {
         QTextStream logToFile(&m_file);

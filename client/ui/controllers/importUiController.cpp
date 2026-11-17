@@ -17,9 +17,11 @@ ImportUiController* ImportUiController::mInstance = nullptr;
 static QMutex qrDecodeMutex;
 #endif
 
-ImportUiController::ImportUiController(ImportController* importController, QObject *parent)
+ImportUiController::ImportUiController(ImportController* importController,
+                                       ServerSubscriptionController* serverSubscriptionController, QObject *parent)
     : QObject(parent),
       m_importController(importController),
+      m_serverSubscriptionController(serverSubscriptionController),
       m_isNativeWireGuardConfig(false)
 {
 #if defined Q_OS_ANDROID
@@ -209,4 +211,39 @@ QString ImportUiController::readTextFile(const QString &fileName)
         return {};
     }
     return QString::fromUtf8(file.readAll());
+}
+
+bool ImportUiController::isSubscriptionUrl(const QString &text) const
+{
+    return ServerSubscriptionController::isSubscriptionUrl(text);
+}
+
+bool ImportUiController::importSubscription(const QString &url)
+{
+    const ErrorCode errorCode = m_serverSubscriptionController->importSubscription(url);
+    if (errorCode != ErrorCode::NoError) {
+        emit importErrorOccurred(errorCode, false);
+        return false;
+    }
+    return true;
+}
+
+bool ImportUiController::updateSubscription(const QString &subscriptionId)
+{
+    const ErrorCode errorCode = m_serverSubscriptionController->updateSubscription(subscriptionId);
+    if (errorCode != ErrorCode::NoError) {
+        emit importErrorOccurred(errorCode, false);
+        return false;
+    }
+    return true;
+}
+
+void ImportUiController::removeSubscription(const QString &subscriptionId)
+{
+    m_serverSubscriptionController->removeSubscription(subscriptionId);
+}
+
+QString ImportUiController::subscriptionName(const QString &subscriptionId) const
+{
+    return m_serverSubscriptionController->subscriptionName(subscriptionId);
 }

@@ -1,5 +1,7 @@
 #include "ipcClient.h"
 #include "ipc.h"
+#include "logger.h"
+#include <QMetaEnum>
 #include <QRemoteObjectNode>
 #include <QtNetwork/qlocalsocket.h>
 
@@ -7,6 +9,19 @@ IpcClient::IpcClient(QObject *parent) : QObject(parent)
 {
     m_node.connectToNode(QUrl("local:" + amnezia::getIpcServiceUrl()));
     m_interface.reset(m_node.acquire<IpcInterfaceReplica>());
+
+    connect(m_interface.data(), &QRemoteObjectReplica::stateChanged, this,
+            [](QRemoteObjectReplica::State state, QRemoteObjectReplica::State oldState) {
+                const QMetaEnum states = QMetaEnum::fromType<QRemoteObjectReplica::State>();
+                if (state == QRemoteObjectReplica::Suspect) {
+                    qWarning() << "[ipc] connection to the service lost:" << states.valueToKey(oldState) << "->" << states.valueToKey(state);
+                    return;
+                }
+                qInfo() << "[ipc] service connection state:" << states.valueToKey(oldState) << "->" << states.valueToKey(state);
+                if (state == QRemoteObjectReplica::Valid && oldState == QRemoteObjectReplica::Suspect) {
+                    Logger::setServiceLogsEnabled(Logger::isEnabled());
+                }
+            });
 }
 
 IpcClient& IpcClient::Instance()

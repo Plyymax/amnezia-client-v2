@@ -4,6 +4,7 @@
 #include <QObject>
 
 #include "core/controllers/selfhosted/importController.h"
+#include "core/controllers/selfhosted/serverSubscriptionController.h"
 
 class ImportUiController : public QObject
 {
@@ -15,7 +16,8 @@ class ImportUiController : public QObject
     Q_PROPERTY(bool isNativeWireGuardConfig READ isNativeWireGuardConfig NOTIFY importConfigChanged)
 
 public:
-    explicit ImportUiController(ImportController* importController, QObject *parent = nullptr);
+    explicit ImportUiController(ImportController* importController, ServerSubscriptionController* serverSubscriptionController,
+                                QObject *parent = nullptr);
 
 public slots:
     void importConfig();
@@ -29,6 +31,12 @@ public slots:
     bool isNativeWireGuardConfig();
     void processNativeWireGuardConfig();
     QString readTextFile(const QString &fileName);
+
+    bool isSubscriptionUrl(const QString &text) const;
+    bool importSubscription(const QString &url);
+    bool updateSubscription(const QString &subscriptionId);
+    void removeSubscription(const QString &subscriptionId);
+    QString subscriptionName(const QString &subscriptionId) const;
 
 #if defined Q_OS_ANDROID || defined Q_OS_IOS
     void startDecodingQr();
@@ -55,6 +63,7 @@ private:
 #endif
 
     ImportController* m_importController;
+    ServerSubscriptionController* m_serverSubscriptionController;
 
     QJsonObject m_config;
     QString m_configFileName;

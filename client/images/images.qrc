@@ -76,6 +76,26 @@
         <file>controls/trash.svg</file>
         <file>controls/trash-2.svg</file>
         <file>controls/x-circle.svg</file>
+        <file>controls/clapperboard.svg</file>
+        <file>controls/code-xml.svg</file>
+        <file>controls/dices.svg</file>
+        <file>controls/gamepad-2.svg</file>
+        <file>controls/graduation-cap.svg</file>
+        <file>controls/headset.svg</file>
+        <file>controls/landmark.svg</file>
+        <file>controls/magnet.svg</file>
+        <file>controls/map.svg</file>
+        <file>controls/message-circle.svg</file>
+        <file>controls/music.svg</file>
+        <file>controls/newspaper.svg</file>
+        <file>controls/palette.svg</file>
+        <file>controls/shopping-bag.svg</file>
+        <file>controls/sparkles.svg</file>
+        <file>controls/tv.svg</file>
+        <file>controls/users.svg</file>
+        <file>controls/wallet.svg</file>
+        <file>controls/wrench.svg</file>
+        <file>controls/youtube.svg</file>
         <file>tray/active.png</file>
         <file>tray/default.png</file>
         <file>tray/error.png</file>

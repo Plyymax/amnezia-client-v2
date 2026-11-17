@@ -71,6 +71,16 @@ PageType {
             text: qsTr("Continue")
 
             onClicked: {
+                if (ImportController.isSubscriptionUrl(textKey.textField.text)) {
+                    PageController.showBusyIndicator(true)
+                    const isImported = ImportController.importSubscription(textKey.textField.text)
+                    PageController.showBusyIndicator(false)
+                    if (isImported) {
+                        PageController.goToPageHome()
+                    }
+                    return
+                }
+
                 if (ImportController.extractConfigFromData(textKey.textField.text)) {
                     PageController.goToPage(PageEnum.PageSetupWizardViewConfig)
                 }

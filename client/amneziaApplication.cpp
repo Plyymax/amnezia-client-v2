@@ -72,6 +72,7 @@ AmneziaApplication::~AmneziaApplication()
 {
 #ifdef AMNEZIA_DESKTOP
     if (m_vpnConnection && m_vpnConnectionThread.isRunning()) {
+        qInfo() << "[connection] disconnecting because the application is exiting";
         QMetaObject::invokeMethod(m_vpnConnection.get(), "disconnectSlots", Qt::BlockingQueuedConnection);
         
         QMetaObject::invokeMethod(m_vpnConnection.get(), "disconnectFromVpn", Qt::BlockingQueuedConnection);

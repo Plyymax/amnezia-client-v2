@@ -64,6 +64,9 @@ bool KillSwitch::init()
         return disableAllTraffic();
     }
 
+#ifdef Q_OS_WIN
+    return WindowsFirewall::create(this)->allowAllTraffic();
+#endif
     return true;
 }
 
@@ -150,6 +153,7 @@ bool KillSwitch::disableKillSwitch() {
     if (isStrictKillSwitchEnabled()) {
         return disableAllTraffic();
     }
+    m_allowedRanges.clear();
     return WindowsFirewall::create(this)->allowAllTraffic();
 #endif
 
@@ -203,9 +207,6 @@ bool KillSwitch::resetAllowedRange(const QStringList &ranges) {
 #endif
 
 #ifdef Q_OS_WIN
-    if (isStrictKillSwitchEnabled()) {
-        WindowsFirewall::create(this)->enableInterface(-1);
-    }
     WindowsFirewall::create(this)->allowTrafficRange(m_allowedRanges);
 #endif
 
@@ -262,6 +263,9 @@ bool KillSwitch::enablePeerTraffic(const QJsonObject &configStr) {
                 config.m_allowedIPAddressRanges.append(IPAddress(QHostAddress(ipRange), 32));
             }
         }
+        for (const QJsonValue &domain : configStr.value(amnezia::configKey::splitTunnelDomains).toArray()) {
+            config.m_vpnOnlyDomains.append(domain.toString());
+        }
     }
 
     config.m_excludedAddresses.append(configStr.value("vpnServer").toString());
@@ -299,9 +303,6 @@ bool KillSwitch::enablePeerTraffic(const QJsonObject &configStr) {
 
 bool KillSwitch::enableKillSwitch(const QJsonObject &configStr, int vpnAdapterIndex) {
 #ifdef Q_OS_WIN
-    if (configStr.value("splitTunnelType").toInt() != 0) {
-        WindowsFirewall::create(this)->allowAllTraffic();
-    }
     return WindowsFirewall::create(this)->enableInterface(vpnAdapterIndex);
 #endif
 

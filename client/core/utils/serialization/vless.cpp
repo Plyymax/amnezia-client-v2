@@ -32,6 +32,7 @@
 
 
 #include "3rd/QJsonStruct/QJsonIO.hpp"
+#include <QJsonDocument>
 #include <QUrlQuery>
 #include "serialization.h"
 
@@ -72,7 +73,7 @@ QJsonObject Deserialize(const QString &str, QString *alias, QString *errMessage)
     }
 
     // fetch remarks
-    const auto remarks = url.fragment();
+    const auto remarks = url.fragment(QUrl::FullyDecoded);
     if (!remarks.isEmpty())
     {
         *alias = remarks;
@@ -182,6 +183,24 @@ QJsonObject Deserialize(const QString &str, QString *alias, QString *errMessage)
         {
             const auto multiMode = QUrl::fromPercentEncoding(query.queryItemValue("mode").toUtf8()) == "multi";
             QJsonIO::SetValue(stream, multiMode, { "grpcSettings", "multiMode" });
+        }
+    }
+    else if (type == "xhttp" || type == "splithttp")
+    {
+        const auto path = query.hasQueryItem("path") ? QUrl::fromPercentEncoding(query.queryItemValue("path").toUtf8()) : "/";
+        QJsonIO::SetValue(stream, path, { "xhttpSettings", "path" });
+
+        if (query.hasQueryItem("host"))
+            QJsonIO::SetValue(stream, QUrl::fromPercentEncoding(query.queryItemValue("host").toUtf8()), { "xhttpSettings", "host" });
+
+        if (query.hasQueryItem("mode"))
+            QJsonIO::SetValue(stream, QUrl::fromPercentEncoding(query.queryItemValue("mode").toUtf8()), { "xhttpSettings", "mode" });
+
+        if (query.hasQueryItem("extra"))
+        {
+            const auto extra = QJsonDocument::fromJson(QUrl::fromPercentEncoding(query.queryItemValue("extra").toUtf8()).toUtf8());
+            if (extra.isObject())
+                QJsonIO::SetValue(stream, extra.object(), { "xhttpSettings", "extra" });
         }
     }
 

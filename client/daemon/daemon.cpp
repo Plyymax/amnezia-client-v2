@@ -17,6 +17,7 @@
 
 constexpr const char* JSON_ALLOWEDIPADDRESSRANGES = "allowedIPAddressRanges";
 constexpr int HANDSHAKE_POLL_MSEC = 250;
+constexpr int PULSE_INTERVAL_MSEC = 60000;
 
 namespace {
 
@@ -36,6 +37,9 @@ Daemon::Daemon(QObject* parent) : QObject(parent) {
 
   m_handshakeTimer.setSingleShot(true);
   connect(&m_handshakeTimer, &QTimer::timeout, this, &Daemon::checkHandshake);
+
+  m_pulseTimer.setInterval(PULSE_INTERVAL_MSEC);
+  connect(&m_pulseTimer, &QTimer::timeout, this, &Daemon::logPulse);
 }
 
 Daemon::~Daemon() {
@@ -389,6 +393,9 @@ bool Daemon::parseConfig(const QJsonObject& obj, InterfaceConfig& config) {
   if (!parseStringList(obj, "allowedDnsServers", config.m_allowedDnsServers)) {
     return false;
   }
+  if (!parseStringList(obj, "vpnOnlyDomains", config.m_vpnOnlyDomains)) {
+    return false;
+  }
 
   config.m_killSwitchEnabled = QVariant(obj.value("killSwitchOption").toString()).toBool();
 
@@ -476,6 +483,9 @@ bool Daemon::parseConfig(const QJsonObject& obj, InterfaceConfig& config) {
 
 bool Daemon::deactivate(bool emitSignals) {
   Q_ASSERT(wgutils() != nullptr);
+
+  logger.info() << "Deactivating the tunnel";
+  m_pulseTimer.stop();
 
   // Deactivate the main interface.
   if (!m_connections.isEmpty()) {
@@ -635,6 +645,8 @@ void Daemon::checkHandshake() {
       }
       if (status.m_handshake != 0) {
         connection.m_date.setMSecsSinceEpoch(status.m_handshake);
+        logger.info() << "Handshake completed, the tunnel is up";
+        m_pulseTimer.start();
         emit connected(status.m_pubkey);
       }
     }
@@ -648,4 +660,30 @@ void Daemon::checkHandshake() {
   if (pendingHandshakes > 0) {
     m_handshakeTimer.start(HANDSHAKE_POLL_MSEC);
   }
+}
+
+void Daemon::logPulse() {
+  if (m_connections.isEmpty()) {
+    return;
+  }
+
+  const InterfaceConfig& config = m_connections.first().m_config;
+  for (const WireguardUtils::PeerStatus& status : wgutils()->getPeerStatus()) {
+    if (status.m_pubkey != config.m_serverPublicKey) {
+      continue;
+    }
+    const QString handshakeAge =
+        status.m_handshake == 0
+            ? QStringLiteral("never")
+            : QString("%1 s ago").arg(
+                  (QDateTime::currentMSecsSinceEpoch() - status.m_handshake) /
+                  1000);
+    logger.info() << QString("[pulse] last handshake %1, received %2 B, sent %3 B")
+                         .arg(handshakeAge)
+                         .arg(status.m_rxBytes)
+                         .arg(status.m_txBytes);
+    return;
+  }
+
+  logger.warning() << "[pulse] the server peer is missing on the interface";
 }

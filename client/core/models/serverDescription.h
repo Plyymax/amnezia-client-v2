@@ -22,6 +22,7 @@ struct ServerDescription
     QString serverName;
     QString baseDescription;
     QString hostName;
+    QString protocolNames;
 
     int configVersion = 0;
 
@@ -49,6 +50,8 @@ struct ServerDescription
     bool isRenewalAvailable = false;
     bool isSubscriptionExpired = false;
     bool isSubscriptionExpiringSoon = false;
+
+    QString subscriptionId;
 
     QString collapsedServerDescription;
     QString expandedServerDescription;

@@ -48,15 +48,6 @@ void OpenVpnProtocol::cleanupResources()
         QThread::msleep(10);
     }
     m_managementServer.stop();
-
-#if defined(Q_OS_WIN) || defined(Q_OS_LINUX) || defined(Q_OS_MACOS)
-    IpcClient::withInterface([](QSharedPointer<IpcInterfaceReplica> iface) {
-        QRemoteObjectPendingReply<bool> reply = iface->disableKillSwitch();
-        if (!reply.waitForFinished(1000) && !reply.returnValue()) {
-            qWarning() << "OpenVpnProtocol::cleanupResources(): Failed to disable killswitch";
-        }
-    });
-#endif
 }
 
 void OpenVpnProtocol::stop()
@@ -272,7 +263,12 @@ ErrorCode OpenVpnProtocol::start()
             [&](QProcess::ProcessState newState) { qDebug() << "PrivilegedProcess stateChanged" << newState; });
 
     connect(m_openVpnProcess.data(), &IpcProcessInterfaceReplica::finished, this,
-            [&]() { setConnectionState(Vpn::ConnectionState::Disconnected); });
+            [this](int exitCode, QProcess::ExitStatus exitStatus) {
+                qWarning().noquote() << QString("[openvpn] process %1 with exit code %2")
+                                                .arg(exitStatus == QProcess::CrashExit ? "crashed" : "exited")
+                                                .arg(exitCode);
+                setConnectionState(Vpn::ConnectionState::Disconnected);
+            });
 
     m_openVpnProcess->start();
 

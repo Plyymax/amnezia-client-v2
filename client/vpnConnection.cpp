@@ -30,19 +30,40 @@
     #include "platforms/ios/ios_controller.h"
 #endif
 
+#include "core/utils/errorStrings.h"
 #include "core/utils/networkUtilities.h"
 #include "core/utils/serverConfigUtils.h"
 #include "vpnConnection.h"
 
 using namespace ProtocolUtils;
 
+namespace
+{
+    constexpr int pulseIntervalMs = 60000;
+
+    QString stateName(Vpn::ConnectionState state)
+    {
+        return QMetaEnum::fromType<Vpn::ConnectionState>().valueToKey(state);
+    }
+
+    QString formatDuration(qint64 ms)
+    {
+        const qint64 seconds = ms / 1000;
+        return QString("%1h %2m %3s").arg(seconds / 3600).arg(seconds % 3600 / 60, 2, 10, QChar('0')).arg(seconds % 60, 2, 10, QChar('0'));
+    }
+}
+
 VpnConnection::VpnConnection(SecureServersRepository* serversRepository, SecureAppSettingsRepository* appSettingsRepository, QObject *parent)
     : QObject(parent),
       m_serversRepository(serversRepository),
       m_appSettingsRepository(appSettingsRepository),
       m_checkTimer(this),
-      m_connectionState(Vpn::ConnectionState::Disconnected)
+      m_connectionState(Vpn::ConnectionState::Disconnected),
+      m_pulseTimer(this)
 {
+    m_pulseTimer.setInterval(pulseIntervalMs);
+    connect(&m_pulseTimer, &QTimer::timeout, this, &VpnConnection::logPulse);
+
 #if defined(Q_OS_IOS) || defined(MACOS_NE)
     m_checkTimer.setInterval(1000);
     connect(IosController::Instance(), &IosController::connectionStateChanged, this, &VpnConnection::setConnectionState);
@@ -56,6 +77,9 @@ VpnConnection::~VpnConnection()
 
 void VpnConnection::onBytesChanged(quint64 receivedBytes, quint64 sentBytes)
 {
+    m_pulseReceivedBytes += receivedBytes;
+    m_pulseSentBytes += sentBytes;
+    m_hasTrafficStats = true;
     emit bytesChanged(receivedBytes, sentBytes);
 }
 
@@ -335,6 +359,12 @@ void VpnConnection::connectToVpn(const QString &serverId, DockerContainer contai
              << m_appSettingsRepository->routeMode();
 
     m_remoteAddress = NetworkUtilities::getIPAddress(vpnConfiguration.value(configKey::hostName).toString());
+    qInfo().noquote() << "[connection] server address:"
+                      << (m_remoteAddress.isEmpty() ? QStringLiteral("could not be resolved") : m_remoteAddress);
+
+    m_protocolName = ContainerUtils::containerToString(container);
+    m_hasTrafficStats = false;
+    m_initiator = QStringLiteral("client (connect request)");
     setConnectionState(Vpn::ConnectionState::Connecting);
 
     m_vpnConfiguration = vpnConfiguration;
@@ -353,6 +383,7 @@ void VpnConnection::connectToVpn(const QString &serverId, DockerContainer contai
 #if !defined(Q_OS_ANDROID) && !defined(Q_OS_IOS) && !defined(MACOS_NE)
     m_vpnProtocol.reset(VpnProtocol::factory(container, m_vpnConfiguration));
     if (!m_vpnProtocol) {
+        qCritical().noquote() << "[connection] protocol is not supported on this platform:" << m_protocolName;
         setConnectionState(Vpn::ConnectionState::Error);
         return;
     }
@@ -372,6 +403,7 @@ void VpnConnection::connectToVpn(const QString &serverId, DockerContainer contai
     createProtocolConnections();
 
     if (ErrorCode err = m_vpnProtocol->start(); err != ErrorCode::NoError) {
+        qCritical().noquote() << QString("[connection] %1 failed to start, error %2: %3").arg(m_protocolName).arg(err).arg(errorString(err));
         setConnectionState(Vpn::ConnectionState::Error);
         emit vpnProtocolError(err);
     }
@@ -385,8 +417,12 @@ void VpnConnection::createProtocolConnections()
 
 #ifdef AMNEZIA_DESKTOP
     IpcClient::withInterface([this](QSharedPointer<IpcInterfaceReplica> rep) {
-        connect(rep.data(), &IpcInterfaceReplica::networkChanged, this, &VpnConnection::reconnectToVpn, Qt::QueuedConnection);
-        connect(rep.data(), &IpcInterfaceReplica::wakeup, this, &VpnConnection::reconnectToVpn, Qt::QueuedConnection);
+        connect(
+                rep.data(), &IpcInterfaceReplica::networkChanged, this,
+                [this]() { reconnectToVpn(QStringLiteral("network change reported by the service")); }, Qt::QueuedConnection);
+        connect(
+                rep.data(), &IpcInterfaceReplica::wakeup, this,
+                [this]() { reconnectToVpn(QStringLiteral("system wakeup reported by the service")); }, Qt::QueuedConnection);
     });
 #endif
 }
@@ -461,6 +497,7 @@ void VpnConnection::appendSplitTunnelingConfig()
 
     amnezia::RouteMode routeMode = amnezia::RouteMode::VpnAllSites;
     QJsonArray sitesJsonArray;
+    QJsonArray domainsJsonArray;
     if (m_appSettingsRepository->isSitesSplitTunnelingEnabled()) {
         routeMode = m_appSettingsRepository->routeMode();
 
@@ -471,6 +508,7 @@ void VpnConnection::appendSplitTunnelingConfig()
                 if (NetworkUtilities::checkIpSubnetFormat(i.key())) {
                     sites.append(i.key());
                 } else {
+                    domainsJsonArray.append(i.key());
                     const QStringList siteIps = SecureAppSettingsRepository::siteIpList(i.value());
                     for (const QString &ip : siteIps) {
                         if (NetworkUtilities::checkIpSubnetFormat(ip)) {
@@ -496,6 +534,8 @@ void VpnConnection::appendSplitTunnelingConfig()
 
     m_vpnConfiguration.insert(configKey::splitTunnelType, routeMode);
     m_vpnConfiguration.insert(configKey::splitTunnelSites, sitesJsonArray);
+    m_vpnConfiguration.insert(configKey::splitTunnelDomains,
+                              routeMode == amnezia::RouteMode::VpnOnlyForwardSites ? domainsJsonArray : QJsonArray());
 
     amnezia::AppsRouteMode appsRouteMode = amnezia::AppsRouteMode::VpnAllApps;
     QJsonArray appsJsonArray;
@@ -554,22 +594,23 @@ QString VpnConnection::bytesPerSecToText(quint64 bytes)
     return QString("%1 %2").arg(QString::number(mbps, 'f', 2)).arg(tr("Mbps")); // Mbit/s
 }
 
-void VpnConnection::reconnectToVpn() {
+void VpnConnection::reconnectToVpn(const QString &reason) {
     if (m_vpnProtocol.isNull())
         return;
 
     if (m_connectionState != Vpn::ConnectionState::Connected) {
-        qWarning() << QString("Reconnect triggered on %1 during inappropriate state: %2; ignoring slot")
-                              .arg(QMetaEnum::fromType<Vpn::ConnectionState>().valueToKey(m_connectionState));
+        qWarning().noquote() << QString("[connection] reconnect on %1 ignored in state %2").arg(reason, stateName(m_connectionState));
         return;
     }
 
-    qDebug() << "Reconnect triggered. Reconnecting to the server";
+    qInfo().noquote() << "[connection] reconnecting:" << reason;
 
+    m_initiator = reason;
     setConnectionState(Vpn::ConnectionState::Reconnecting);
 
     m_vpnProtocol->stop();
     if (ErrorCode err = m_vpnProtocol->start(); err != ErrorCode::NoError) {
+        qCritical().noquote() << QString("[connection] %1 failed to restart, error %2: %3").arg(m_protocolName).arg(err).arg(errorString(err));
         setConnectionState(Vpn::ConnectionState::Error);
         emit vpnProtocolError(err);
     }
@@ -582,6 +623,8 @@ void VpnConnection::disconnectFromVpn()
     IosController::Instance()->disconnectVpn();
     disconnect(&m_checkTimer, &QTimer::timeout, IosController::Instance(), &IosController::checkStatus);
 #endif
+
+    m_initiator = QStringLiteral("client (disconnect request)");
 
     if (m_vpnProtocol.isNull()) {
         setConnectionState(Vpn::ConnectionState::Disconnected);
@@ -604,6 +647,14 @@ void VpnConnection::disconnectFromVpn()
 
     m_vpnProtocol->stop();
 
+#ifdef AMNEZIA_DESKTOP
+    IpcClient::withInterface([](QSharedPointer<IpcInterfaceReplica> iface) {
+        QRemoteObjectPendingReply<bool> reply = iface->disableKillSwitch();
+        if (!reply.waitForFinished() || !reply.returnValue())
+            qWarning() << "VpnConnection::disconnectFromVpn: Failed to disable killswitch";
+    });
+#endif
+
 #if !defined(Q_OS_ANDROID) && !defined(AMNEZIA_DESKTOP)
     m_vpnProtocol->deleteLater();
 #endif
@@ -617,6 +668,58 @@ void VpnConnection::setConnectionState(Vpn::ConnectionState state) {
     if (state == Vpn::Disconnected && m_connectionState == Vpn::Reconnecting)
         return;
 
+    logStateChange(state);
+
     m_connectionState = state;
     emit connectionStateChanged(state);
+}
+
+void VpnConnection::logStateChange(Vpn::ConnectionState state)
+{
+    if (state == m_connectionState) {
+        return;
+    }
+
+    QString line = QString("[connection] %1 -> %2, protocol: %3, initiator: %4")
+                           .arg(stateName(m_connectionState), stateName(state), m_protocolName,
+                                m_initiator.isEmpty() ? QStringLiteral("protocol or core (see the lines above)") : m_initiator);
+    if (state == Vpn::ConnectionState::Error) {
+        const ErrorCode err = lastError();
+        line += QString(", error %1: %2").arg(err).arg(errorString(err));
+    }
+    if (m_connectionState == Vpn::ConnectionState::Connected) {
+        line += ", was connected for " + formatDuration(m_connectedTimer.elapsed());
+    }
+
+    if (state == Vpn::ConnectionState::Error) {
+        qWarning().noquote() << line;
+    } else {
+        qInfo().noquote() << line;
+    }
+
+    if (state == Vpn::ConnectionState::Connected) {
+        m_connectedTimer.start();
+        m_pulseReceivedBytes = 0;
+        m_pulseSentBytes = 0;
+        m_pulseTimer.start();
+    } else {
+        m_pulseTimer.stop();
+    }
+
+    if (state == Vpn::ConnectionState::Connected || state == Vpn::ConnectionState::Disconnected || state == Vpn::ConnectionState::Error) {
+        m_initiator.clear();
+    }
+}
+
+void VpnConnection::logPulse()
+{
+    const QString traffic = m_hasTrafficStats
+            ? QString("received %1 B, sent %2 B").arg(m_pulseReceivedBytes).arg(m_pulseSentBytes)
+            : QStringLiteral("not reported by this protocol");
+    qInfo().noquote() << QString("[pulse] %1 connected for %2, traffic in the last %3 s: %4")
+                                 .arg(m_protocolName, formatDuration(m_connectedTimer.elapsed()))
+                                 .arg(pulseIntervalMs / 1000)
+                                 .arg(traffic);
+    m_pulseReceivedBytes = 0;
+    m_pulseSentBytes = 0;
 }

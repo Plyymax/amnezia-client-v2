@@ -148,6 +148,7 @@ namespace amnezia
         constexpr QLatin1String tproxy("tproxy");
 
         constexpr QLatin1String splitTunnelSites("splitTunnelSites");
+        constexpr QLatin1String splitTunnelDomains("splitTunnelDomains");
         constexpr QLatin1String splitTunnelType("splitTunnelType");
 
         constexpr QLatin1String splitTunnelApps("splitTunnelApps");
@@ -177,6 +178,11 @@ namespace amnezia
         constexpr QLatin1String dataSent("dataSent");
 
         constexpr QLatin1String storageServerId("storageServerId");
+
+        constexpr QLatin1String subscriptionId("subscriptionId");
+        constexpr QLatin1String subscriptionName("subscriptionName");
+        constexpr QLatin1String subscriptionUrl("subscriptionUrl");
+        constexpr QLatin1String subscriptionLink("subscriptionLink");
 
         // ── Xray-specific keys ────────────────────────────────────────
 

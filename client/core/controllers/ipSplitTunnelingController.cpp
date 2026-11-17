@@ -1,7 +1,56 @@
 #include "ipSplitTunnelingController.h"
 #include "core/utils/networkUtilities.h"
-#include <QJsonObject>
 #include <QDebug>
+#include <QJsonObject>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+
+namespace
+{
+    constexpr int presetDownloadTimeoutMs = 30000;
+
+    const QString opencckGroupUrl = QStringLiteral("https://iplist.opencck.org/?format=amnezia&data=cidr4&group=%1");
+    const QString lib4uReleaseUrl =
+            QStringLiteral("https://github.com/lib4u/amnezia-tunneling-ru/releases/download/latest/%1");
+
+    QVector<SitesPreset> allSitesPresets()
+    {
+        QVector<SitesPreset> presets;
+        const QStringList opencckGroups = { "youtube", "messengers", "socials",   "ai",      "discord",
+                                            "video",   "music",      "games",     "news",    "anime",
+                                            "art",     "education",  "tools",     "torrent", "shop",
+                                            "finance", "hosting",    "jetbrains", "casino" };
+        for (const QString &group : opencckGroups) {
+            presets.append({ group, RouteMode::VpnOnlyForwardSites, QUrl(opencckGroupUrl.arg(group)) });
+        }
+
+        presets.append({ "ru-sites", RouteMode::VpnAllExceptSites, QUrl(lib4uReleaseUrl.arg("amnezia.json")), true });
+        presets.append({ "ru-services", RouteMode::VpnAllExceptSites, QUrl(lib4uReleaseUrl.arg("amnezia-ip-lite.json")) });
+        presets.append(
+                { "ru-networks", RouteMode::VpnAllExceptSites, QUrl(lib4uReleaseUrl.arg("amnezia-ip.json")), true });
+        return presets;
+    }
+
+    bool isAvailableOnPlatform(const SitesPreset &preset)
+    {
+#ifdef AMNEZIA_DESKTOP
+        Q_UNUSED(preset)
+        return true;
+#else
+        return !preset.desktopOnly;
+#endif
+    }
+
+    QSet<QString> presetsHostnames(const QVariantMap &presets)
+    {
+        QSet<QString> hostnames;
+        for (const QVariant &presetSites : presets) {
+            const QStringList sites = presetSites.toStringList();
+            hostnames.unite(QSet<QString>(sites.cbegin(), sites.cend()));
+        }
+        return hostnames;
+    }
+}
 
 IpSplitTunnelingController::IpSplitTunnelingController(SecureAppSettingsRepository* appSettingsRepository, QObject* parent)
     : QObject(parent),
@@ -217,6 +266,19 @@ void IpSplitTunnelingController::processSite(const QString &hostname, const QStr
 
 bool IpSplitTunnelingController::importSitesFromJson(const QByteArray& jsonData, bool replaceExisting, QString &errorMessage)
 {
+    QMap<QString, QStringList> sites;
+    if (!parseSitesJson(jsonData, sites, errorMessage)) {
+        return false;
+    }
+
+    addSites(sites, replaceExisting);
+
+    return true;
+}
+
+bool IpSplitTunnelingController::parseSitesJson(const QByteArray &jsonData, QMap<QString, QStringList> &sites,
+                                                QString &errorMessage) const
+{
     QJsonParseError parseError;
     QJsonDocument jsonDocument = QJsonDocument::fromJson(jsonData, &parseError);
     
@@ -231,8 +293,7 @@ bool IpSplitTunnelingController::importSitesFromJson(const QByteArray& jsonData,
     }
     
     QJsonArray jsonArray = jsonDocument.array();
-    QMap<QString, QStringList> sites;
-    
+
     for (auto jsonValue : jsonArray) {
         QJsonObject jsonObject = jsonValue.toObject();
         QString hostname = jsonObject.value("hostname").toString("");
@@ -260,9 +321,7 @@ bool IpSplitTunnelingController::importSitesFromJson(const QByteArray& jsonData,
         
         sites.insert(normalizedHostname, ips);
     }
-    
-    addSites(sites, replaceExisting);
-    
+
     return true;
 }
 
@@ -290,3 +349,117 @@ QByteArray IpSplitTunnelingController::exportSitesToJson() const
     return jsonDocument.toJson();
 }
 
+QVector<SitesPreset> IpSplitTunnelingController::sitesPresets(RouteMode routeMode)
+{
+    QVector<SitesPreset> presets;
+    for (const SitesPreset &preset : allSitesPresets()) {
+        if (preset.routeMode == routeMode && isAvailableOnPlatform(preset)) {
+            presets.append(preset);
+        }
+    }
+    return presets;
+}
+
+QStringList IpSplitTunnelingController::addedPresetIds() const
+{
+    return m_appSettingsRepository->vpnSitesPresets(m_currentRouteMode).keys();
+}
+
+bool IpSplitTunnelingController::isPresetLoading(const QString &presetId) const
+{
+    return m_loadingPresets.contains(presetId);
+}
+
+bool IpSplitTunnelingController::addPreset(const QString &presetId)
+{
+    const QVector<SitesPreset> presets = sitesPresets(m_currentRouteMode);
+    const auto preset = std::find_if(presets.cbegin(), presets.cend(),
+                                     [&presetId](const SitesPreset &item) { return item.id == presetId; });
+    if (preset == presets.cend() || m_loadingPresets.contains(presetId) || addedPresetIds().contains(presetId)) {
+        return false;
+    }
+
+    QNetworkRequest request(preset->url);
+    request.setTransferTimeout(presetDownloadTimeoutMs);
+
+    m_loadingPresets.insert(presetId);
+    QNetworkReply *reply = m_networkManager.get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, preset = *preset]() {
+        reply->deleteLater();
+        m_loadingPresets.remove(preset.id);
+
+        if (reply->error() != QNetworkReply::NoError) {
+            qWarning() << "[SplitTunneling] Failed to download sites preset" << preset.id << reply->errorString();
+            emit presetAddFailed(preset.id);
+            return;
+        }
+
+        QMap<QString, QStringList> sites;
+        QString errorMessage;
+        if (!parseSitesJson(reply->readAll(), sites, errorMessage) || sites.isEmpty()) {
+            qWarning() << "[SplitTunneling] Failed to parse sites preset" << preset.id << errorMessage;
+            emit presetAddFailed(preset.id);
+            return;
+        }
+
+        applyPreset(preset, sites);
+    });
+    return true;
+}
+
+void IpSplitTunnelingController::applyPreset(const SitesPreset &preset, const QMap<QString, QStringList> &sites)
+{
+    QVariantMap presets = m_appSettingsRepository->vpnSitesPresets(preset.routeMode);
+    const QSet<QString> sitesFromPresets = presetsHostnames(presets);
+    const QVariantMap existingSites = m_appSettingsRepository->vpnSites(preset.routeMode);
+
+    QMap<QString, QStringList> newSites;
+    QStringList presetSites;
+    for (auto it = sites.constBegin(); it != sites.constEnd(); ++it) {
+        if (!existingSites.contains(it.key())) {
+            newSites.insert(it.key(), it.value());
+            presetSites.append(it.key());
+        } else if (sitesFromPresets.contains(it.key())) {
+            presetSites.append(it.key());
+        }
+    }
+
+    presets.insert(preset.id, presetSites);
+    m_appSettingsRepository->setVpnSitesPresets(preset.routeMode, presets);
+
+    if (preset.routeMode == m_currentRouteMode) {
+        for (auto it = newSites.constBegin(); it != newSites.constEnd(); ++it) {
+            m_sites.append(qMakePair(it.key(), it.value()));
+        }
+    }
+    m_appSettingsRepository->addVpnSites(preset.routeMode, newSites);
+
+    emit presetAdded(preset.id);
+}
+
+bool IpSplitTunnelingController::removePreset(const QString &presetId)
+{
+    QVariantMap presets = m_appSettingsRepository->vpnSitesPresets(m_currentRouteMode);
+    if (!presets.contains(presetId)) {
+        return false;
+    }
+
+    const QStringList presetSites = presets.take(presetId).toStringList();
+    const QSet<QString> sitesFromOtherPresets = presetsHostnames(presets);
+
+    QStringList sitesToRemove;
+    for (const QString &hostname : presetSites) {
+        if (!sitesFromOtherPresets.contains(hostname)) {
+            sitesToRemove.append(hostname);
+        }
+    }
+
+    const QSet<QString> sitesToRemoveSet(sitesToRemove.cbegin(), sitesToRemove.cend());
+    m_sites.removeIf([&sitesToRemoveSet](const QPair<QString, QStringList> &site) {
+        return sitesToRemoveSet.contains(site.first);
+    });
+
+    m_appSettingsRepository->setVpnSitesPresets(m_currentRouteMode, presets);
+    m_appSettingsRepository->removeVpnSites(m_currentRouteMode, sitesToRemove);
+    return true;
+}

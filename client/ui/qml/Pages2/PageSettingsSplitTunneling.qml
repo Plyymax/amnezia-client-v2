@@ -166,6 +166,18 @@ PageType {
                 text: root.routeModes[modeSelector.currentIndex].name
                 color: AmneziaStyle.color.textSecondary
             }
+
+            SitesPresetsGrid {
+                Layout.fillWidth: true
+                Layout.leftMargin: 16
+                Layout.rightMargin: 16
+                Layout.bottomMargin: 24
+
+                enabled: root.pageEnabled
+                maxVisibleCount: 6
+
+                onShowAllClicked: presetsDrawer.open()
+            }
         }
 
         delegate: Item {
@@ -222,6 +234,10 @@ PageType {
         onMoreClicked: {
             moreActionsMenu.openAbove(addSitePanel.moreButton)
         }
+    }
+
+    SitesPresetsDrawer {
+        id: presetsDrawer
     }
 
     PopupMenuType {

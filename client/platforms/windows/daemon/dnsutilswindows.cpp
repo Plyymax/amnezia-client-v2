@@ -11,6 +11,7 @@
 #include <ws2ipdef.h>
 
 #include <QProcess>
+#include <QSettings>
 #include <QTextStream>
 
 #include "leakdetector.h"
@@ -20,6 +21,59 @@ constexpr uint32_t WINDOWS_NETSH_TIMEOUT_MSEC = 2000;
 
 namespace {
 Logger logger("DnsUtilsWindows");
+
+const QString NRPT_POLICY_PATH =
+    "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\Dnscache\\"
+    "Parameters\\DnsPolicyConfig";
+const QString NRPT_RULE_PREFIX = "{a3f0c6d2-7b14-4e59-9c1d-";
+constexpr int NRPT_NAMES_PER_RULE = 50;
+constexpr int NRPT_CONFIG_GENERIC_DNS_SERVERS = 0x8;
+}  // namespace
+
+// static
+bool DnsUtilsWindows::setNamespaceResolvers(const QStringList& domains,
+                                            const QStringList& resolvers) {
+  clearNamespaceResolvers();
+  if (domains.isEmpty() || resolvers.isEmpty()) {
+    return true;
+  }
+
+  QStringList names;
+  for (const QString& domain : domains) {
+    names << domain << "." + domain;
+  }
+
+  QSettings policies(NRPT_POLICY_PATH, QSettings::NativeFormat);
+  for (int first = 0; first < names.size(); first += NRPT_NAMES_PER_RULE) {
+    const int ruleIndex = first / NRPT_NAMES_PER_RULE;
+    policies.beginGroup(NRPT_RULE_PREFIX +
+                        QString("%1}").arg(ruleIndex, 12, 10, QChar('0')));
+    policies.setValue("Version", 2);
+    policies.setValue("Name", names.mid(first, NRPT_NAMES_PER_RULE));
+    policies.setValue("GenericDNSServers", resolvers.join(';'));
+    policies.setValue("ConfigOptions", NRPT_CONFIG_GENERIC_DNS_SERVERS);
+    policies.setValue("IPSECCARestriction", QString(""));
+    policies.endGroup();
+  }
+  policies.sync();
+
+  if (policies.status() != QSettings::NoError) {
+    logger.error() << "Failed to write NRPT rules";
+    return false;
+  }
+  logger.debug() << "NRPT rules set for" << domains.size() << "domains";
+  return true;
+}
+
+// static
+void DnsUtilsWindows::clearNamespaceResolvers() {
+  QSettings policies(NRPT_POLICY_PATH, QSettings::NativeFormat);
+  for (const QString& rule : policies.childGroups()) {
+    if (rule.startsWith(NRPT_RULE_PREFIX)) {
+      policies.remove(rule);
+    }
+  }
+  policies.sync();
 }
 
 DnsUtilsWindows::DnsUtilsWindows(QObject* parent) : DnsUtils(parent) {

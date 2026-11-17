@@ -9,6 +9,7 @@
 
 #include <QHostAddress>
 #include <QString>
+#include <QStringList>
 
 #include "daemon/dnsutils.h"
 
@@ -22,6 +23,10 @@ class DnsUtilsWindows final : public DnsUtils {
   bool updateResolvers(const QString& ifname,
                        const QList<QHostAddress>& resolvers) override;
   bool restoreResolvers() override;
+
+  static bool setNamespaceResolvers(const QStringList& domains,
+                                    const QStringList& resolvers);
+  static void clearNamespaceResolvers();
 
  private:
   quint64 m_luid = 0;

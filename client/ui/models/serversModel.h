@@ -30,6 +30,12 @@ public:
         IsServerFromGatewayApiRole,
         IsSubscriptionExpiredRole,
         IsSubscriptionExpiringSoonRole,
+
+        SubscriptionIdRole,
+
+        NameWithoutFlagRole,
+        FlagCodeRole,
+        ProtocolNamesRole,
     };
 
     ServersModel(QObject *parent = nullptr);

@@ -41,8 +41,11 @@ public:
     bool addVpnSite(RouteMode mode, const QString &site, const QStringList &ips = {});
     void addVpnSites(RouteMode mode, const QMap<QString, QStringList> &sites);
     void removeVpnSite(RouteMode mode, const QString &site);
+    void removeVpnSites(RouteMode mode, const QStringList &sites);
     void removeAllVpnSites(RouteMode mode);
     QVariantMap vpnSites(RouteMode mode) const;
+    QVariantMap vpnSitesPresets(RouteMode mode) const;
+    void setVpnSitesPresets(RouteMode mode, const QVariantMap &presets);
 
     // Normalizes a stored vpn site value into a list of IPs.
     // Supports both the legacy format (a single IP string) and the current one (a list of IPs).

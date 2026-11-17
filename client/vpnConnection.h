@@ -1,6 +1,7 @@
 #ifndef VPNCONNECTION_H
 #define VPNCONNECTION_H
 
+#include <QElapsedTimer>
 #include <QObject>
 #include <QMetaObject>
 #include <QString>
@@ -50,7 +51,7 @@ public:
 public slots:
     void setRepositories(SecureServersRepository* serversRepository, SecureAppSettingsRepository* appSettingsRepository);
     void connectToVpn(const QString &serverId, DockerContainer container, const QJsonObject &vpnConfiguration);
-    void reconnectToVpn();
+    void reconnectToVpn(const QString &reason);
     void disconnectFromVpn();
 
     void onKillSwitchModeChanged(bool enabled);
@@ -91,6 +92,17 @@ private:
 #endif
 
    Vpn::ConnectionState m_connectionState;
+
+   QString m_initiator;
+   QString m_protocolName;
+   QElapsedTimer m_connectedTimer;
+   QTimer m_pulseTimer;
+   quint64 m_pulseReceivedBytes = 0;
+   quint64 m_pulseSentBytes = 0;
+   bool m_hasTrafficStats = false;
+
+   void logStateChange(Vpn::ConnectionState state);
+   void logPulse();
 
    void createProtocolConnections();
 

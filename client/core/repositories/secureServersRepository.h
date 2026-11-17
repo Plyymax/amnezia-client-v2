@@ -26,7 +26,8 @@ class SecureServersRepository : public QObject
 public:
     explicit SecureServersRepository(SecureQSettings *settings, QObject *parent = nullptr);
 
-    QString addServer(const QString &serverId, const QJsonObject &serverJson, serverConfigUtils::ConfigType kind);
+    QString addServer(const QString &serverId, const QJsonObject &serverJson, serverConfigUtils::ConfigType kind,
+                      int position = -1);
     void editServer(const QString &serverId, const QJsonObject &serverJson, serverConfigUtils::ConfigType kind);
     void removeServer(const QString &serverId);
     serverConfigUtils::ConfigType serverKind(const QString &serverId) const;

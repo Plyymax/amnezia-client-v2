@@ -50,9 +50,11 @@ public:
 
 private:
     void readIkev2Configuration(const QJsonObject &configuration);
+    void onConnected();
 
 private:
     QJsonObject m_config;
+    QString m_serverAddress;
 
     //RAS functions and parameters
     HRASCONN        hRasConn{nullptr};

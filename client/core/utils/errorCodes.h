@@ -93,6 +93,8 @@ namespace amnezia
         ConfigFormatVersionNotSupportedError = 907,
         RestoreBackupUnsupportedConfigsSkipped = 908,
         ImportXraySettingsFileUseXrayPage = 909,
+        ImportSubscriptionDownloadError = 910,
+        ImportSubscriptionEmptyError = 911,
 
         // Android errors
         AndroidError = 1000,

@@ -31,6 +31,17 @@
     #include "xray_defs.h"
 #endif
 
+namespace
+{
+    constexpr int pulseIntervalMs = 60000;
+}
+
+Xray::Xray()
+{
+    m_pulseTimer.setInterval(pulseIntervalMs);
+    QObject::connect(&m_pulseTimer, &QTimer::timeout, [this]() { logPulse(); });
+}
+
 qint64 Xray::start(const QString &cfg)
 {
     if (m_currentToken != 0) {
@@ -45,6 +56,12 @@ qint64 Xray::start(const QString &cfg)
 
     m_currentToken = ++m_lastToken;
     qDebug() << "Xray::start() engine started, owner token" << m_currentToken;
+
+    m_socketsOpened = 0;
+    m_warningLines = 0;
+    m_errorLines = 0;
+    m_runningTimer.start();
+    m_pulseTimer.start();
     return m_currentToken;
 }
 
@@ -130,7 +147,9 @@ bool Xray::startXray(const QString &cfg)
 
 bool Xray::stopXray()
 {
-    qDebug() << "Xray::stopXray()";
+    qInfo().noquote() << QString("[xray] stopping the core after %1 s").arg(m_runningTimer.isValid() ? m_runningTimer.elapsed() / 1000 : 0);
+    m_pulseTimer.stop();
+    m_runningTimer.invalidate();
     bool success = true;
     if (auto err = amnezia_xray_stop(); err != nullptr) {
         qDebug() << "[xray] failed to stop: " << err;
@@ -151,13 +170,31 @@ bool Xray::stopXray()
 
 void Xray::logHandler(char* str)
 {
-    QMetaObject::invokeMethod(qApp, [str = QString::fromUtf8(str)] {
+    QMetaObject::invokeMethod(qApp, [this, str = QString::fromUtf8(str)] {
+        if (str.contains("[Error]")) {
+            ++m_errorLines;
+        } else if (str.contains("[Warning]")) {
+            ++m_warningLines;
+        }
         qDebug() << "[xray]" << str;
     }, Qt::QueuedConnection);
 }
 
+void Xray::logPulse()
+{
+    qInfo().noquote() << QString("[pulse] xray core running for %1 s, outbound sockets opened in the last %2 s: %3, core warnings: %4, errors: %5")
+                                 .arg(m_runningTimer.elapsed() / 1000)
+                                 .arg(pulseIntervalMs / 1000)
+                                 .arg(m_socketsOpened.exchange(0))
+                                 .arg(m_warningLines)
+                                 .arg(m_errorLines);
+    m_warningLines = 0;
+    m_errorLines = 0;
+}
+
 void Xray::sockCallback(uintptr_t fd)
 {
+    ++m_socketsOpened;
 #ifdef Q_OS_MAC
     if (m_defaultIfaceIdx > 0) {
         setsockopt(fd, IPPROTO_IP, IP_BOUND_IF, &m_defaultIfaceIdx, sizeof(m_defaultIfaceIdx));

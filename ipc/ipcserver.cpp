@@ -1,5 +1,6 @@
 #include "ipcserver.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDebug>
 #include <QFileInfo>
@@ -23,6 +24,22 @@
     #include "tapcontroller_win.h"
 #endif
 
+
+namespace
+{
+    const QDateTime serviceStartTime = QDateTime::currentDateTimeUtc();
+
+    template<typename T>
+    T logResult(const QString &call, T result)
+    {
+        if (result) {
+            qInfo().noquote() << "[ipc]" << call << "-> ok";
+        } else {
+            qWarning().noquote() << "[ipc]" << call << "-> failed";
+        }
+        return result;
+    }
+}
 
 IpcServer::IpcServer(QObject *parent) : IpcInterfaceSource(parent)
 {
@@ -98,7 +115,7 @@ bool IpcServer::flushDns()
     qDebug() << "IpcServer::flushDns";
 #endif
 
-    return Router::flushDns();
+    return logResult("flushDns", Router::flushDns());
 }
 
 void IpcServer::resetIpStack()
@@ -161,7 +178,7 @@ bool IpcServer::createTun(const QString &dev, const QString &subnet)
     qDebug() << "IpcServer::createTun";
 #endif
 
-    return Router::createTun(dev, subnet);
+    return logResult("createTun " + dev, Router::createTun(dev, subnet));
 }
 
 bool IpcServer::deleteTun(const QString &dev)
@@ -170,7 +187,7 @@ bool IpcServer::deleteTun(const QString &dev)
     qDebug() << "IpcServer::deleteTun";
 #endif
 
-    return Router::deleteTun(dev);
+    return logResult("deleteTun " + dev, Router::deleteTun(dev));
 }
 
 bool IpcServer::updateResolvers(const QString &ifname, const QList<QHostAddress> &resolvers)
@@ -179,7 +196,7 @@ bool IpcServer::updateResolvers(const QString &ifname, const QList<QHostAddress>
     qDebug() << "IpcServer::updateResolvers";
 #endif
 
-    return Router::updateResolvers(ifname, resolvers);
+    return logResult(QString("updateResolvers %1, %2 servers").arg(ifname).arg(resolvers.size()), Router::updateResolvers(ifname, resolvers));
 }
 
 bool IpcServer::restoreResolvers()
@@ -188,7 +205,7 @@ bool IpcServer::restoreResolvers()
     qDebug() << "IpcServer::restoreResolvers";
 #endif
 
-    return Router::restoreResolvers();
+    return logResult("restoreResolvers", Router::restoreResolvers());
 }
 
 bool IpcServer::StartRoutingIpv6()
@@ -197,7 +214,7 @@ bool IpcServer::StartRoutingIpv6()
     qDebug() << "IpcServer::StartRoutingIpv6";
 #endif
 
-    return Router::StartRoutingIpv6();
+    return logResult("StartRoutingIpv6", Router::StartRoutingIpv6());
 }
 
 bool IpcServer::StopRoutingIpv6()
@@ -206,7 +223,7 @@ bool IpcServer::StopRoutingIpv6()
     qDebug() << "IpcServer::StopRoutingIpv6";
 #endif
 
-    return Router::StopRoutingIpv6();
+    return logResult("StopRoutingIpv6", Router::StopRoutingIpv6());
 }
 
 void IpcServer::setLogsEnabled(bool enabled)
@@ -215,9 +232,17 @@ void IpcServer::setLogsEnabled(bool enabled)
     qDebug() << "IpcServer::setLogsEnabled";
 #endif
 
+    if (enabled == Logger::isEnabled()) {
+        return;
+    }
+
     if (enabled) {
         Logger::init(true);
+        qInfo().noquote() << QString("[service] logging enabled, service pid %1 running since %2")
+                                     .arg(QCoreApplication::applicationPid())
+                                     .arg(serviceStartTime.toString(Qt::ISODate));
     } else {
+        qInfo() << "[service] logging disabled";
         Logger::deInit();
     }
 }
@@ -228,6 +253,7 @@ bool IpcServer::startNetworkCheck(const QString& serverIpv4Gateway, const QStrin
     qDebug() << "IpcServer::startNetworkCheck";
 #endif
 
+    qInfo() << "[ipc] startNetworkCheck";
     m_pingHelper.start(serverIpv4Gateway, deviceIpv4Address);
     return true;
 }
@@ -238,6 +264,7 @@ bool IpcServer::stopNetworkCheck()
     qDebug() << "IpcServer::stopNetworkCheck";
 #endif
 
+    qInfo() << "[ipc] stopNetworkCheck";
     m_pingHelper.stop();
     return true;
 }
@@ -248,7 +275,7 @@ bool IpcServer::resetKillSwitchAllowedRange(QStringList ranges)
     qDebug() << "IpcServer::resetKillSwitchAllowedRange";
 #endif
 
-    return KillSwitch::instance()->resetAllowedRange(ranges);
+    return logResult(QString("killswitch resetAllowedRange, %1 ranges").arg(ranges.size()), KillSwitch::instance()->resetAllowedRange(ranges));
 }
 
 bool IpcServer::addKillSwitchAllowedRange(QStringList ranges)
@@ -257,7 +284,7 @@ bool IpcServer::addKillSwitchAllowedRange(QStringList ranges)
     qDebug() << "IpcServer::addKillSwitchAllowedRange";
 #endif
 
-    return KillSwitch::instance()->addAllowedRange(ranges);
+    return logResult(QString("killswitch addAllowedRange, %1 ranges").arg(ranges.size()), KillSwitch::instance()->addAllowedRange(ranges));
 }
 
 bool IpcServer::disableAllTraffic()
@@ -266,7 +293,7 @@ bool IpcServer::disableAllTraffic()
     qDebug() << "IpcServer::disableAllTraffic";
 #endif
 
-    return KillSwitch::instance()->disableAllTraffic();
+    return logResult("killswitch disableAllTraffic (all traffic blocked)", KillSwitch::instance()->disableAllTraffic());
 }
 
 bool IpcServer::enableKillSwitch(const QJsonObject &configStr, int vpnAdapterIndex)
@@ -275,7 +302,8 @@ bool IpcServer::enableKillSwitch(const QJsonObject &configStr, int vpnAdapterInd
     qDebug() << "IpcServer::enableKillSwitch";
 #endif
 
-    return KillSwitch::instance()->enableKillSwitch(configStr, vpnAdapterIndex);
+    return logResult(QString("killswitch enable, vpn adapter %1").arg(vpnAdapterIndex),
+                     KillSwitch::instance()->enableKillSwitch(configStr, vpnAdapterIndex));
 }
 
 bool IpcServer::disableKillSwitch()
@@ -284,7 +312,7 @@ bool IpcServer::disableKillSwitch()
     qDebug() << "IpcServer::disableKillSwitch";
 #endif
 
-    return KillSwitch::instance()->disableKillSwitch();
+    return logResult("killswitch disable", KillSwitch::instance()->disableKillSwitch());
 }
 
 bool IpcServer::enablePeerTraffic(const QJsonObject &configStr)
@@ -293,7 +321,7 @@ bool IpcServer::enablePeerTraffic(const QJsonObject &configStr)
     qDebug() << "IpcServer::enablePeerTraffic";
 #endif
 
-    return KillSwitch::instance()->enablePeerTraffic(configStr);
+    return logResult("killswitch enablePeerTraffic", KillSwitch::instance()->enablePeerTraffic(configStr));
 }
 
 bool IpcServer::refreshKillSwitch(bool enabled)
@@ -302,7 +330,7 @@ bool IpcServer::refreshKillSwitch(bool enabled)
     qDebug() << "IpcServer::refreshKillSwitch";
 #endif
 
-    return KillSwitch::instance()->refresh(enabled);
+    return logResult(QString("killswitch refresh, strict mode %1").arg(enabled ? "on" : "off"), KillSwitch::instance()->refresh(enabled));
 }
 
 bool IpcServer::xrayStart(const QString& cfg)
@@ -311,7 +339,7 @@ bool IpcServer::xrayStart(const QString& cfg)
     qDebug() << "IpcServer::xrayStart";
 #endif
 
-    return Xray::getInstance().start(cfg) != 0;
+    return logResult("xrayStart", Xray::getInstance().start(cfg) != 0);
 }
 
 bool IpcServer::xrayStop()
@@ -320,7 +348,7 @@ bool IpcServer::xrayStop()
     qDebug() << "IpcServer::xrayStop";
 #endif
 
-    return Xray::getInstance().stopAny();
+    return logResult("xrayStop", Xray::getInstance().stopAny());
 }
 
 qint64 IpcServer::xrayStartOwned(const QString& cfg)
@@ -329,7 +357,7 @@ qint64 IpcServer::xrayStartOwned(const QString& cfg)
     qDebug() << "IpcServer::xrayStartOwned";
 #endif
 
-    return Xray::getInstance().start(cfg);
+    return logResult("xrayStartOwned", Xray::getInstance().start(cfg));
 }
 
 bool IpcServer::xrayStopOwned(qint64 token)
@@ -338,7 +366,7 @@ bool IpcServer::xrayStopOwned(qint64 token)
     qDebug() << "IpcServer::xrayStopOwned";
 #endif
 
-    return Xray::getInstance().stop(token);
+    return logResult(QString("xrayStopOwned, token %1").arg(token), Xray::getInstance().stop(token));
 }
 
 qint64 IpcServer::xrayCurrentToken()

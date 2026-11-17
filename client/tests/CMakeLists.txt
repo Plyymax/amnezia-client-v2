@@ -161,6 +161,16 @@ if(NOT ANDROID)
         test_common
     )
 
+    add_executable(test_server_subscription
+        testServerSubscription.cpp
+    )
+
+    target_link_libraries(test_server_subscription PRIVATE
+        Qt6::Test
+        Qt6::HttpServer
+        test_common
+    )
+
     add_executable(test_xray_server_inbound
         testXrayServerInbound.cpp
     )
@@ -478,6 +488,7 @@ if(NOT ANDROID)
     add_test(NAME SettingsSignalsTest              COMMAND test_settings_signals)
     add_test(NAME UiServersModelAndControllerTest  COMMAND test_ui_servers_model_and_controller)
     add_test(NAME XraySerializationTest            COMMAND test_xray_serialization)
+    add_test(NAME ServerSubscriptionTest           COMMAND test_server_subscription)
     add_test(NAME XrayServerInboundTest            COMMAND test_xray_server_inbound)
     add_test(NAME XrayGeneratorMatrixTest          COMMAND test_xray_generator_matrix)
     add_test(NAME XrayConfigModelTest              COMMAND test_xray_config_model)

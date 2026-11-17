@@ -57,7 +57,7 @@ ErrorCode VpnProtocol::lastError() const
 
 void VpnProtocol::onTimeout()
 {
-    qDebug() << "Timeout";
+    qWarning() << "[connection] the connection attempt timed out, stopping";
 
     emit timeoutTimerEvent();
     stop();

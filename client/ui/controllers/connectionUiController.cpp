@@ -43,6 +43,7 @@ void ConnectionUiController::openConnection()
 
 void ConnectionUiController::closeConnection()
 {
+    qInfo() << "[connection] disconnect requested by the user";
     m_connectionController->closeConnection();
 }
 
@@ -133,6 +134,7 @@ void ConnectionUiController::toggleConnection()
     } else if (isConnected()) {
         closeConnection();
     } else {
+        qInfo() << "[connection] connect requested by the user";
         const QString serverId = m_serversController->getDefaultServerId();
         if (serverId.isEmpty()) {
             return;

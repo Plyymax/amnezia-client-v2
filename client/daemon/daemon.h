@@ -77,6 +77,7 @@ class Daemon : public QObject {
                               QStringList& list);
 
   void checkHandshake();
+  void logPulse();
 
   class ConnectionState {
    public:
@@ -88,6 +89,7 @@ class Daemon : public QObject {
   QMap<InterfaceConfig::HopType, ConnectionState> m_connections;
   QHash<IPAddress, int> m_excludedAddrSet;
   QTimer m_handshakeTimer;
+  QTimer m_pulseTimer;
 };
 
 #endif  // DAEMON_H

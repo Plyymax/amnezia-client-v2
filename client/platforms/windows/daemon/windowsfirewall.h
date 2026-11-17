@@ -41,8 +41,6 @@ class WindowsFirewall final : public QObject {
   bool enableInterface(int vpnAdapterIndex);
   bool enableLanBypass(const QList<IPAddress>& ranges);
   bool enablePeerTraffic(const InterfaceConfig& config);
-  bool disablePeerTraffic(const QString& pubkey);
-  bool disableKillSwitch();
   bool allowAllTraffic();
   bool allowTrafficRange(const QStringList& ranges);
 
@@ -53,6 +51,10 @@ class WindowsFirewall final : public QObject {
   bool m_init = false;
   QList<uint64_t> m_activeRules;
   QMultiMap<QString, uint64_t> m_peerRules;
+  QList<uint64_t> m_supersededRules;
+
+  void supersedeRules(const QList<uint64_t>& filterIds);
+  bool deleteSupersededRules();
 
   bool allowTrafficForAppOnAll(const QString& exePath, int weight,
                                const QString& title);
@@ -60,13 +62,16 @@ class WindowsFirewall final : public QObject {
                       const QString& title, const QString& peer = QString());
   bool blockTrafficTo(const IPAddress& addr, uint8_t weight,
                       const QString& title, const QString& peer = QString());
-  bool blockTrafficOnPort(uint port, uint8_t weight, const QString& title);
+  bool blockTrafficOnPort(uint port, uint8_t weight, const QString& title,
+                          const QString& peer = QString());
   bool allowTrafficTo(const IPAddress& addr, int weight, const QString& title,
                       const QString& peer = QString());
   bool allowTrafficTo(const QHostAddress& targetIP, uint port, int weight,
                       const QString& title, const QString& peer = QString());
   bool allowTrafficOfAdapter(int networkAdapter, uint8_t weight,
                              const QString& title);
+  bool allowDnsOfAdapter(int networkAdapter, uint8_t weight,
+                         const QString& title);
   bool allowDHCPTraffic(uint8_t weight, const QString& title);
   bool allowHyperVTraffic(uint8_t weight, const QString& title);
   bool allowLoopbackTraffic(uint8_t weight, const QString& title);

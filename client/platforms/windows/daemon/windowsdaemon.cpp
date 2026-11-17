@@ -41,8 +41,6 @@ WindowsDaemon::WindowsDaemon() : Daemon(nullptr) {
 
   connect(m_wgutils.get(), &WireguardUtilsWindows::backendFailure, this,
           &WindowsDaemon::monitorBackendFailure);
-  connect(this, &WindowsDaemon::activationFailure,
-          [this]() { m_firewallManager->disableKillSwitch(); });
 }
 
 WindowsDaemon::~WindowsDaemon() {

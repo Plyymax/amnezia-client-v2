@@ -7,13 +7,26 @@
 #include "core/utils/routeModes.h"
 #include "core/utils/commonStructs.h"
 
-IpSplitTunnelingUiController::IpSplitTunnelingUiController(IpSplitTunnelingController* ipSplitTunnelingController,
-                                                          IpSplitTunnelingModel* ipSplitTunnelingModel, QObject *parent)
+IpSplitTunnelingUiController::IpSplitTunnelingUiController(IpSplitTunnelingController *ipSplitTunnelingController,
+                                                           IpSplitTunnelingModel *ipSplitTunnelingModel, QObject *parent)
     : QObject(parent),
       m_ipSplitTunnelingController(ipSplitTunnelingController),
-      m_ipSplitTunnelingModel(ipSplitTunnelingModel)
+      m_ipSplitTunnelingModel(ipSplitTunnelingModel),
+      m_presetsModel(new IpSplitTunnelingPresetsModel(this))
 {
     m_ipSplitTunnelingModel->updateModel(m_ipSplitTunnelingController->getCurrentSites());
+    updatePresetsModel();
+
+    connect(m_ipSplitTunnelingController, &IpSplitTunnelingController::presetAdded, this, [this](const QString &presetId) {
+        updatePresetsModel();
+        emit finished(tr("Set added: %1").arg(IpSplitTunnelingPresetsModel::presetName(presetId)));
+    });
+    connect(m_ipSplitTunnelingController, &IpSplitTunnelingController::presetAddFailed, this,
+            [this](const QString &presetId) {
+                updatePresetsModel();
+                emit errorOccurred(tr("Couldn't download the %1 set. Check your internet connection and try again.")
+                                           .arg(IpSplitTunnelingPresetsModel::presetName(presetId)));
+            });
 }
 
 void IpSplitTunnelingUiController::addSite(QString hostname)
@@ -86,7 +99,41 @@ bool IpSplitTunnelingUiController::isSplitTunnelingEnabled() const
     return m_ipSplitTunnelingController->isSplitTunnelingEnabled();
 }
 
+void IpSplitTunnelingUiController::addPreset(const QString &presetId)
+{
+    if (m_ipSplitTunnelingController->addPreset(presetId)) {
+        updatePresetsModel();
+    }
+}
+
+void IpSplitTunnelingUiController::removePreset(const QString &presetId)
+{
+    if (m_ipSplitTunnelingController->removePreset(presetId)) {
+        emit finished(tr("Set removed: %1").arg(IpSplitTunnelingPresetsModel::presetName(presetId)));
+    }
+}
+
+IpSplitTunnelingPresetsModel *IpSplitTunnelingUiController::presetsModel() const
+{
+    return m_presetsModel;
+}
+
 void IpSplitTunnelingUiController::updateModel()
 {
     m_ipSplitTunnelingModel->updateModel(m_ipSplitTunnelingController->getCurrentSites());
+    updatePresetsModel();
+}
+
+void IpSplitTunnelingUiController::updatePresetsModel()
+{
+    QStringList presetIds;
+    QStringList loadingPresetIds;
+    for (const SitesPreset &preset :
+         IpSplitTunnelingController::sitesPresets(m_ipSplitTunnelingController->getRouteMode())) {
+        presetIds.append(preset.id);
+        if (m_ipSplitTunnelingController->isPresetLoading(preset.id)) {
+            loadingPresetIds.append(preset.id);
+        }
+    }
+    m_presetsModel->updateModel(presetIds, m_ipSplitTunnelingController->addedPresetIds(), loadingPresetIds);
 }

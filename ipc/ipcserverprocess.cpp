@@ -1,5 +1,6 @@
 #include "ipcserverprocess.h"
 #include "ipc.h"
+#include <QFileInfo>
 #include <QProcess>
 
 #ifndef Q_OS_IOS
@@ -19,6 +20,14 @@ IpcServerProcess::IpcServerProcess(QObject *parent) :
     connect(m_process.data(), &QProcess::errorOccurred, [&](QProcess::ProcessError error){
         qDebug() << "IpcServerProcess errorOccurred " << error;
     });
+
+    connect(m_process.data(), QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+            [this](int exitCode, QProcess::ExitStatus exitStatus) {
+                qInfo().noquote() << QString("[process] %1 %2 with exit code %3")
+                                             .arg(QFileInfo(m_process->program()).fileName(),
+                                                  exitStatus == QProcess::CrashExit ? "crashed" : "exited")
+                                             .arg(exitCode);
+            });
 
 }
 

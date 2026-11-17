@@ -5,6 +5,8 @@
 #include <QtCore/qsharedpointer.h>
 #include <QHostAddress>
 #include <QList>
+#include <QStringList>
+#include <QTimer>
 
 #include "core/utils/errorCodes.h"
 #include "core/utils/routeModes.h"
@@ -24,6 +26,7 @@ public:
 private:
     ErrorCode setupRouting();
     ErrorCode startTun2Socks();
+    void appendTun2SocksOutput(const QString &output);
 
     QJsonObject m_xrayConfig;
     amnezia::RouteMode m_routeMode;
@@ -35,6 +38,8 @@ private:
     int m_socksPort = 10808;
 
     QSharedPointer<IpcProcessInterfaceReplica> m_tun2socksProcess;
+    QStringList m_tun2socksOutputTail;
+    static constexpr int tun2socksOutputTailLines = 20;
     int m_tun2socksRetryCount = 0;
     static constexpr int maxTun2SocksRetries = 5;
     static constexpr int tun2socksRetryDelayMs = 400;
@@ -42,6 +47,10 @@ private:
     // Owner token of the shared xray engine; a late stop with a stale token
     // won't kill an engine restarted by another consumer (e.g. the local proxy).
     qint64 m_xrayToken = 0;
+
+#ifdef Q_OS_WIN
+    QTimer m_trafficTimer;
+#endif
 };
 
 #endif // XRAYPROTOCOL_H

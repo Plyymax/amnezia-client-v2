@@ -189,10 +189,32 @@ void SecureAppSettingsRepository::removeVpnSite(RouteMode mode, const QString &s
     emit sitesChanged(mode);
 }
 
+void SecureAppSettingsRepository::removeVpnSites(RouteMode mode, const QStringList &sites)
+{
+    QVariantMap allSites = vpnSites(mode);
+    for (const QString &site : sites) {
+        allSites.remove(site);
+    }
+
+    setVpnSites(mode, allSites);
+    emit sitesChanged(mode);
+}
+
 void SecureAppSettingsRepository::removeAllVpnSites(RouteMode mode)
 {
     setVpnSites(mode, QVariantMap());
+    setVpnSitesPresets(mode, QVariantMap());
     emit sitesChanged(mode);
+}
+
+QVariantMap SecureAppSettingsRepository::vpnSitesPresets(RouteMode mode) const
+{
+    return value("Conf/" + routeModeString(mode) + "Presets").toMap();
+}
+
+void SecureAppSettingsRepository::setVpnSitesPresets(RouteMode mode, const QVariantMap &presets)
+{
+    setValue("Conf/" + routeModeString(mode) + "Presets", presets);
 }
 
 bool SecureAppSettingsRepository::isSitesSplitTunnelingEnabled() const

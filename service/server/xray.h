@@ -1,7 +1,11 @@
 #ifndef XRAY_H
 #define XRAY_H
 
+#include <QElapsedTimer>
 #include <QString>
+#include <QTimer>
+
+#include <atomic>
 
 class Xray
 {
@@ -21,11 +25,20 @@ public:
     qint64 currentToken() const;
 
 private:
+    Xray();
+
     bool startXray(const QString& cfg);
     bool stopXray();
+    void logPulse();
 
     qint64 m_currentToken = 0;
     qint64 m_lastToken = 0;
+
+    QTimer m_pulseTimer;
+    QElapsedTimer m_runningTimer;
+    std::atomic<quint64> m_socketsOpened { 0 };
+    quint64 m_warningLines = 0;
+    quint64 m_errorLines = 0;
 
     static void ctxSockCallback(uintptr_t fd, void* ctx) {
         reinterpret_cast<Xray*>(ctx)->sockCallback(fd);

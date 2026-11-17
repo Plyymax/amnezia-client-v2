@@ -2,7 +2,9 @@
 
 #include "core/models/serverDescription.h"
 
+#include <QFile>
 #include <QHash>
+#include <QRegularExpression>
 #include <QSet>
 #include <QJsonDocument>
 
@@ -34,6 +36,34 @@ int rowForServerId(const QVector<ServerDescription> &descriptions, const QString
     }
 
     return -1;
+}
+
+struct NameWithFlag
+{
+    QString name;
+    QString flagCode;
+};
+
+NameWithFlag splitCountryFlag(const QString &serverName)
+{
+    constexpr char32_t regionalIndicatorA = 0x1F1E6;
+    static const QRegularExpression flagPattern(QStringLiteral("[\\x{1F1E6}-\\x{1F1FF}]{2}"));
+
+    const QRegularExpressionMatch match = flagPattern.match(serverName);
+    if (!match.hasMatch()) {
+        return { serverName, {} };
+    }
+
+    QString flagCode;
+    for (const char32_t letter : match.captured().toUcs4()) {
+        flagCode.append(QLatin1Char(char('A' + (letter - regionalIndicatorA))));
+    }
+
+    const QString name = QString(serverName).remove(match.capturedStart(), match.capturedLength()).simplified();
+    if (name.isEmpty() || !QFile::exists(QStringLiteral(":/countriesFlags/images/flagKit/%1.svg").arg(flagCode))) {
+        return { serverName, {} };
+    }
+    return { name, flagCode };
 }
 } // namespace
 
@@ -81,6 +111,14 @@ QVariant ServersModel::data(const QModelIndex &index, int role) const
         return row.isSubscriptionExpired;
     case IsSubscriptionExpiringSoonRole:
         return row.isSubscriptionExpiringSoon;
+    case SubscriptionIdRole:
+        return row.subscriptionId;
+    case NameWithoutFlagRole:
+        return splitCountryFlag(row.serverName).name;
+    case FlagCodeRole:
+        return splitCountryFlag(row.serverName).flagCode;
+    case ProtocolNamesRole:
+        return configVersion ? QString() : row.protocolNames;
     }
 
     return QVariant();
@@ -141,6 +179,10 @@ QHash<int, QByteArray> ServersModel::roleNames() const
     roles[IsServerFromGatewayApiRole] = "isServerFromGatewayApi";
     roles[IsSubscriptionExpiredRole] = "isSubscriptionExpired";
     roles[IsSubscriptionExpiringSoonRole] = "isSubscriptionExpiringSoon";
+    roles[SubscriptionIdRole] = "subscriptionId";
+    roles[NameWithoutFlagRole] = "nameWithoutFlag";
+    roles[FlagCodeRole] = "flagCode";
+    roles[ProtocolNamesRole] = "protocolNames";
 
     return roles;
 }

@@ -177,6 +177,7 @@ void CoreController::initCoreControllers()
     m_installController = new InstallController(m_serversRepository, m_appSettingsRepository, this);
     m_exportController = new ExportController(m_serversRepository, m_appSettingsRepository, this);
     m_importCoreController = new ImportController(m_serversRepository, m_appSettingsRepository, this);
+    m_serverSubscriptionController = new ServerSubscriptionController(m_serversRepository, m_importCoreController, this);
     m_connectionController = new ConnectionController(m_serversRepository, m_appSettingsRepository, m_vpnConnection.get(), this);
     m_settingsController = new SettingsController(m_serversRepository, m_appSettingsRepository, this);
     m_localProxyController = new LocalProxyController(m_serversRepository, m_appSettingsRepository, m_subscriptionController, this);
@@ -201,7 +202,7 @@ void CoreController::initControllers()
                                                      m_connectionController, this);
     setQmlContextProperty("InstallController", m_installUiController);
 
-    m_importController = new ImportUiController(m_importCoreController, this);
+    m_importController = new ImportUiController(m_importCoreController, m_serverSubscriptionController, this);
     setQmlContextProperty("ImportController", m_importController);
 
     m_exportUiController = new ExportUiController(m_exportController, this);
