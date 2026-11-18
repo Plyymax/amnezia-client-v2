@@ -14,6 +14,7 @@ public:
         PresetIdRole = Qt::UserRole + 1,
         NameRole,
         DescriptionRole,
+        ServicesRole,
         IconPathRole,
         IsAddedRole,
         IsLoadingRole

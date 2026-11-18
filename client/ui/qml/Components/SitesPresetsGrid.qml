@@ -50,12 +50,14 @@ ColumnLayout {
 
             SitesPresetTile {
                 Layout.fillWidth: true
+                Layout.fillHeight: true
                 Layout.preferredWidth: 1
 
                 visible: root.maxVisibleCount < 0 || index < root.maxVisibleCount
 
                 text: name
                 description: model.description
+                services: model.services
                 iconSource: iconPath
                 added: isAdded
                 loading: isLoading

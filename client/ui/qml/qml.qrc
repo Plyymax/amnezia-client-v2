@@ -130,6 +130,7 @@
         <file>Controls2/MinMaxRowType.qml</file>
         <file>Controls2/NavigationBarType.qml</file>
         <file>Controls2/PopupMenuType.qml</file>
+        <file>Controls2/ToolTipType.qml</file>
         <file>Controls2/PopupMenuItemType.qml</file>
         <file>Controls2/PopupMenuSeparatorType.qml</file>
 

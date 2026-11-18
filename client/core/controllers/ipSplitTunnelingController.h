@@ -20,12 +20,18 @@
 
 using namespace amnezia;
 
+enum class SitesPresetFormat {
+    AmneziaJson,
+    OpencckSites
+};
+
 struct SitesPreset
 {
     QString id;
     RouteMode routeMode;
     QUrl url;
     bool desktopOnly = false;
+    SitesPresetFormat format = SitesPresetFormat::AmneziaJson;
 };
 
 class IpSplitTunnelingController : public QObject
@@ -70,6 +76,7 @@ private:
     void processSiteAfterResolve(const QString &hostname, const QStringList &ips);
     void processSite(const QString &hostname, const QStringList &ips);
     bool parseSitesJson(const QByteArray &jsonData, QMap<QString, QStringList> &sites, QString &errorMessage) const;
+    QMap<QString, QStringList> parseOpencckSitesJson(const QByteArray &jsonData) const;
     void applyPreset(const SitesPreset &preset, const QMap<QString, QStringList> &sites);
 
     SecureAppSettingsRepository* m_appSettingsRepository;

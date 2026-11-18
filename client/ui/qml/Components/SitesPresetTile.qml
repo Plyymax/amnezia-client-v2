@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.impl
@@ -7,14 +9,17 @@ import Style 1.0
 
 import "../Controls2"
 import "../Controls2/TextTypes"
+import "../Config"
 
 AbstractButton {
     id: root
 
     property string description
+    property string services
     property string iconSource
     property bool added: false
     property bool loading: false
+    property bool servicesPinned: false
 
     implicitHeight: content.implicitHeight + topPadding + bottomPadding
 
@@ -95,7 +100,7 @@ AbstractButton {
                     text: root.description
                     color: AmneziaStyle.color.textQuaternary
                     elide: Text.ElideRight
-                    maximumLineCount: 1
+                    maximumLineCount: 2
                 }
             }
         }
@@ -131,6 +136,28 @@ AbstractButton {
             running: root.loading
             visible: root.loading
             color: AmneziaStyle.color.iconSecondary
+        }
+    }
+
+    Loader {
+        anchors.fill: parent
+
+        active: root.services !== "" && (root.servicesPinned || (root.hovered && !GC.isMobile()))
+
+        sourceComponent: ToolTipType {
+            title: root.text
+            text: root.services
+            delay: root.servicesPinned ? 0 : 500
+            closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+            Component.onCompleted: open()
+            onClosed: root.servicesPinned = false
+        }
+    }
+
+    onPressAndHold: {
+        if (root.services !== "") {
+            root.servicesPinned = true
         }
     }
 

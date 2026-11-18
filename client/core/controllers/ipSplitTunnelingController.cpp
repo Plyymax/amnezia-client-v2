@@ -9,7 +9,14 @@ namespace
 {
     constexpr int presetDownloadTimeoutMs = 30000;
 
+#ifdef AMNEZIA_DESKTOP
+    const QString opencckGroupUrl =
+            QStringLiteral("https://iplist.opencck.org/?format=json&data[]=domains&data[]=cidr4&group=%1");
+    constexpr SitesPresetFormat opencckFormat = SitesPresetFormat::OpencckSites;
+#else
     const QString opencckGroupUrl = QStringLiteral("https://iplist.opencck.org/?format=amnezia&data=cidr4&group=%1");
+    constexpr SitesPresetFormat opencckFormat = SitesPresetFormat::AmneziaJson;
+#endif
     const QString lib4uReleaseUrl =
             QStringLiteral("https://github.com/lib4u/amnezia-tunneling-ru/releases/download/latest/%1");
 
@@ -21,7 +28,8 @@ namespace
                                             "art",     "education",  "tools",     "torrent", "shop",
                                             "finance", "hosting",    "jetbrains", "casino" };
         for (const QString &group : opencckGroups) {
-            presets.append({ group, RouteMode::VpnOnlyForwardSites, QUrl(opencckGroupUrl.arg(group)) });
+            presets.append(
+                    { group, RouteMode::VpnOnlyForwardSites, QUrl(opencckGroupUrl.arg(group)), false, opencckFormat });
         }
 
         presets.append({ "ru-sites", RouteMode::VpnAllExceptSites, QUrl(lib4uReleaseUrl.arg("amnezia.json")), true });
@@ -49,6 +57,28 @@ namespace
             hostnames.unite(QSet<QString>(sites.cbegin(), sites.cend()));
         }
         return hostnames;
+    }
+
+    bool hasParentDomain(const QString &domain, const QSet<QString> &domains)
+    {
+        for (qsizetype dot = domain.indexOf('.'); dot >= 0; dot = domain.indexOf('.', dot + 1)) {
+            if (domains.contains(domain.mid(dot + 1))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    QStringList opencckNetworks(const QJsonArray &cidrs)
+    {
+        QStringList networks;
+        for (const QJsonValue &cidr : cidrs) {
+            if (NetworkUtilities::checkIpSubnetFormat(cidr.toString())) {
+                networks.append(cidr.toString());
+            }
+        }
+        networks.removeDuplicates();
+        return networks;
     }
 }
 
@@ -325,6 +355,42 @@ bool IpSplitTunnelingController::parseSitesJson(const QByteArray &jsonData, QMap
     return true;
 }
 
+QMap<QString, QStringList> IpSplitTunnelingController::parseOpencckSitesJson(const QByteArray &jsonData) const
+{
+    const QJsonObject services = QJsonDocument::fromJson(jsonData).object();
+
+    QMap<QString, QStringList> sites;
+    QSet<QString> domains;
+    for (auto it = services.constBegin(); it != services.constEnd(); ++it) {
+        const QJsonObject service = it.value().toObject();
+
+        for (const QJsonValue &domain : service.value("domains").toArray()) {
+            const QString hostname = normalizeHostname(domain.toString().toLower());
+            if (validateHostname(hostname)) {
+                domains.insert(hostname);
+            }
+        }
+
+        const QStringList networks = opencckNetworks(service.value("cidr4").toArray());
+        const QString serviceHostname = normalizeHostname(it.key().toLower());
+        if (validateHostname(serviceHostname) && !serviceHostname.contains('@')) {
+            sites[serviceHostname].append(networks);
+            sites[serviceHostname].removeDuplicates();
+        } else {
+            for (const QString &network : networks) {
+                sites.insert(network, {});
+            }
+        }
+    }
+
+    for (const QString &domain : std::as_const(domains)) {
+        if (!sites.contains(domain) && !hasParentDomain(domain, domains)) {
+            sites.insert(domain, {});
+        }
+    }
+    return sites;
+}
+
 QByteArray IpSplitTunnelingController::exportSitesToJson() const
 {
     QVector<QPair<QString, QStringList>> sites = getCurrentSites();
@@ -394,9 +460,15 @@ bool IpSplitTunnelingController::addPreset(const QString &presetId)
             return;
         }
 
+        const QByteArray data = reply->readAll();
         QMap<QString, QStringList> sites;
         QString errorMessage;
-        if (!parseSitesJson(reply->readAll(), sites, errorMessage) || sites.isEmpty()) {
+        if (preset.format == SitesPresetFormat::OpencckSites) {
+            sites = parseOpencckSitesJson(data);
+        } else {
+            parseSitesJson(data, sites, errorMessage);
+        }
+        if (sites.isEmpty()) {
             qWarning() << "[SplitTunneling] Failed to parse sites preset" << preset.id << errorMessage;
             emit presetAddFailed(preset.id);
             return;
@@ -413,13 +485,9 @@ void IpSplitTunnelingController::applyPreset(const SitesPreset &preset, const QM
     const QSet<QString> sitesFromPresets = presetsHostnames(presets);
     const QVariantMap existingSites = m_appSettingsRepository->vpnSites(preset.routeMode);
 
-    QMap<QString, QStringList> newSites;
     QStringList presetSites;
     for (auto it = sites.constBegin(); it != sites.constEnd(); ++it) {
-        if (!existingSites.contains(it.key())) {
-            newSites.insert(it.key(), it.value());
-            presetSites.append(it.key());
-        } else if (sitesFromPresets.contains(it.key())) {
+        if (!existingSites.contains(it.key()) || sitesFromPresets.contains(it.key())) {
             presetSites.append(it.key());
         }
     }
@@ -428,11 +496,10 @@ void IpSplitTunnelingController::applyPreset(const SitesPreset &preset, const QM
     m_appSettingsRepository->setVpnSitesPresets(preset.routeMode, presets);
 
     if (preset.routeMode == m_currentRouteMode) {
-        for (auto it = newSites.constBegin(); it != newSites.constEnd(); ++it) {
-            m_sites.append(qMakePair(it.key(), it.value()));
-        }
+        addSites(sites, false);
+    } else {
+        m_appSettingsRepository->addVpnSites(preset.routeMode, sites);
     }
-    m_appSettingsRepository->addVpnSites(preset.routeMode, newSites);
 
     emit presetAdded(preset.id);
 }

@@ -1,7 +1,6 @@
 #include "router_win.h"
 
 #include <string>
-#include <tlhelp32.h>
 #include <tchar.h>
 
 #include <QProcess>
@@ -9,20 +8,12 @@
 
 #include <core/utils/networkUtilities.h>
 
-LONG (NTAPI * NtSuspendProcess)(HANDLE ProcessHandle) = NULL;
-LONG (NTAPI * NtResumeProcess)(HANDLE ProcessHandle)  = NULL;
-
-#define STATUS_SUCCESS ((NTSTATUS)0x00000000L)
-
 QList<QString> RouterWin::kIpv6Subnets = { "fc00::/7", "2000::/4", "3000::/4" };
 
 RouterWin &RouterWin::Instance()
 {
     static RouterWin s;
     BOOL ok;
-    ok = s.InitNtFunctions();
-    if (!ok) qDebug() << "RouterWin::Instance failed to InitNtFunctions";
-
     ok = s.EnableDebugPrivilege();
     if (!ok) qDebug() << "RouterWin::Instance failed to EnableDebugPrivilege";
 
@@ -144,8 +135,6 @@ int RouterWin::routeAddList(const QString &gw, const QStringList &ips)
 
     qDebug() << "Router::routeAddList finished, success: " << success_count << "/" << ips.size();
 
-    if (m_ipForwardRows.size() > 500) suspendWcmSvc(true);
-
     return success_count;
 }
 
@@ -196,8 +185,6 @@ bool RouterWin::clearSavedRoutes()
 
     qDebug() << "Router::clearSavedRoutes : removed routes:" << removed_count << "of" << m_ipForwardRows.size();
     m_ipForwardRows.clear();
-
-    suspendWcmSvc(false);
 
     return true;
 }
@@ -380,90 +367,6 @@ bool RouterWin::createTun(const QString &dev, const QString &subnet)
     return ctx.found;
 }
 
-void RouterWin::suspendWcmSvc(bool suspend)
-{
-    if (suspend == m_suspended) return;
-
-    // Solve Windows bug (routes > 1000)
-    DWORD wcmSvcPid = GetServicePid(std::wstring(L"wcmSvc").c_str());
-
-    //ListProcessThreads(wcmSvcPid);
-    BOOL ok = SuspendProcess(suspend, wcmSvcPid);
-    if (ok) {
-        m_suspended = suspend;
-    }
-
-    qDebug() << "RouterWin::routeAddList" <<
-                (ok ? "succeed to" : "failed to") <<
-                (suspend ? "suspend wcmSvc" : "resume wcmSvc");
-
-}
-
-DWORD RouterWin::GetServicePid(LPCWSTR serviceName)
-{
-    const auto hScm = OpenSCManagerW(nullptr, nullptr, NULL);
-    const auto hSc = OpenServiceW(hScm, serviceName, SERVICE_QUERY_STATUS);
-
-    SERVICE_STATUS_PROCESS ssp = {};
-    DWORD bytesNeeded = 0;
-    QueryServiceStatusEx(hSc, SC_STATUS_PROCESS_INFO, reinterpret_cast<LPBYTE>(&ssp), sizeof(ssp), &bytesNeeded);
-
-    CloseServiceHandle(hSc);
-    CloseServiceHandle(hScm);
-
-    return ssp.dwProcessId;
-}
-
-BOOL RouterWin::ListProcessThreads( DWORD dwOwnerPID )
-{
-  HANDLE hThreadSnap = INVALID_HANDLE_VALUE;
-  THREADENTRY32 te32;
-
-  // Take a snapshot of all running threads
-  hThreadSnap = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
-  if( hThreadSnap == INVALID_HANDLE_VALUE )
-    return( FALSE );
-
-  // Fill in the size of the structure before using it.
-  te32.dwSize = sizeof(THREADENTRY32);
-
-  // Retrieve information about the first thread,
-  // and exit if unsuccessful
-  if( !Thread32First( hThreadSnap, &te32 ) )
-  {
-    //printError( TEXT("Thread32First") ); // show cause of failure
-    CloseHandle( hThreadSnap );          // clean the snapshot object
-    return( FALSE );
-  }
-
-  // Now walk the thread list of the system,
-  // and display information about each thread
-  // associated with the specified process
-  //HANDLE threadHandle;
-  do
-  {
-    if( te32.th32OwnerProcessID == dwOwnerPID )
-    {
-        HANDLE threadHandle = OpenThread (PROCESS_QUERY_INFORMATION, FALSE, te32.th32ThreadID);
-         qDebug() << "OpenThread GetLastError:"<< te32.th32ThreadID << GetLastError() << threadHandle;
-        ULONG64 cycles = 0;
-        BOOL ok = QueryThreadCycleTime(threadHandle, &cycles);
-        qDebug() << "QueryThreadCycleTime GetLastError:" << ok << GetLastError();
-
-        qDebug() << "Thread cycles:" << te32.th32ThreadID << cycles;
-//      _tprintf( TEXT("\n\n     THREAD ID      = 0x%08X"), te32.th32ThreadID );
-//      _tprintf( TEXT("\n     Base priority  = %d"), te32.tpBasePri );
-//      _tprintf( TEXT("\n     Delta priority = %d"), te32.tpDeltaPri );
-//      _tprintf( TEXT("\n"));
-
-        CloseHandle(threadHandle);
-    }
-  } while( Thread32Next(hThreadSnap, &te32 ) );
-
-  CloseHandle( hThreadSnap );
-  return( TRUE );
-}
-
 BOOL RouterWin::EnableDebugPrivilege(VOID)
 {
   HANDLE           hToken = NULL;
@@ -479,38 +382,6 @@ BOOL RouterWin::EnableDebugPrivilege(VOID)
   priv.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
 
   return AdjustTokenPrivileges(hToken, FALSE, &priv, sizeof(priv), NULL, NULL);
-}
-
-BOOL RouterWin::InitNtFunctions(VOID)
-{
-  HMODULE hModule;
-
-  hModule = GetModuleHandleW(L"ntdll.dll");
-  if (hModule == NULL)
-    return FALSE;
-
-  //NtSuspendProcess = (decltype(NtSuspendProcess))GetProcAddress(hModule, "NtSuspendThread");
-  NtSuspendProcess = (decltype(NtSuspendProcess))GetProcAddress(hModule, "NtSuspendProcess");
-  if (NtSuspendProcess == NULL)
-    return FALSE;
-
-  //NtResumeProcess = (decltype(NtResumeProcess))GetProcAddress(hModule, "NtResumeThread");
-  NtResumeProcess = (decltype(NtResumeProcess))GetProcAddress(hModule, "NtResumeProcess");
-  if (NtResumeProcess == NULL)
-    return FALSE;
-
-  return TRUE;
-}
-
-BOOL RouterWin::SuspendProcess(BOOL fSuspend, DWORD dwProcessId)
-{
-    HANDLE pHandle = OpenProcess(PROCESS_SUSPEND_RESUME, FALSE, dwProcessId);
-    if (pHandle == NULL) return false;
-
-    bool ok = ((fSuspend ? NtSuspendProcess : NtResumeProcess)(pHandle) == STATUS_SUCCESS);
-    CloseHandle(pHandle);
-
-    return ok;
 }
 
 bool RouterWin::updateResolvers(const QString& ifname, const QList<QHostAddress>& resolvers)
