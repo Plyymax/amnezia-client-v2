@@ -200,13 +200,11 @@ if(NOT ANDROID)
 
     add_executable(test_xray_routing
         testXrayRouting.cpp
-        ../core/protocols/xrayRouting.cpp
     )
 
-    target_include_directories(test_xray_routing PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_link_libraries(test_xray_routing PRIVATE
         Qt6::Test
-        Qt6::Network
+        test_common
     )
 
     add_executable(test_xray_core_accepts
