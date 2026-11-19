@@ -1,6 +1,7 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
+#include <QFileInfo>
 #include <QProcess>
 #include <QRandomGenerator>
 #include <QRegularExpression>
@@ -225,12 +226,13 @@ bool Utils::killProcessByName(const QString &name)
     pe32.dwSize = sizeof(PROCESSENTRY32W);
 
     bool success = false;
+    const QString exeName = QFileInfo(name).fileName();
 
     if (Process32FirstW(hSnapshot, &pe32)) {
         do {
             QString exeFile = QString::fromWCharArray(pe32.szExeFile);
 
-            if (exeFile.compare(name, Qt::CaseInsensitive) == 0) {
+            if (exeFile.compare(exeName, Qt::CaseInsensitive) == 0) {
                 HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, pe32.th32ProcessID);
                 if (hProcess != NULL) {
                     if (TerminateProcess(hProcess, 0)) {
@@ -253,7 +255,7 @@ bool Utils::killProcessByName(const QString &name)
 #elif defined Q_OS_IOS || defined(Q_OS_ANDROID)
     return false;
 #else
-    return QProcess::execute("pkill", { name }) == 0;
+    return QProcess::execute("pkill", { QFileInfo(name).fileName() }) == 0;
 #endif
 }
 

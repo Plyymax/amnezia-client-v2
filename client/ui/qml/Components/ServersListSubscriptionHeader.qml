@@ -67,8 +67,9 @@ Item {
                 }
 
                 PageController.showBusyIndicator(true)
-                ImportController.updateSubscription(root.section)
-                PageController.showBusyIndicator(false)
+                // Updating rebuilds the servers list and destroys this header, so it must not run inside its own click handler
+                Qt.callLater(ImportController.updateSubscription, root.section)
+                Qt.callLater(PageController.showBusyIndicator, false)
             }
         }
 
