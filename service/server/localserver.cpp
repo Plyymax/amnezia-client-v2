@@ -19,11 +19,16 @@
 
 namespace {
 Logger logger("WgDaemonServer");
+constexpr int abandonedSessionDelayMs = 20000;
 }
 
 LocalServer::LocalServer(QObject *parent) : QObject(parent),
     m_ipcServer(this)
 {
+    m_abandonedSessionTimer.setSingleShot(true);
+    m_abandonedSessionTimer.setInterval(abandonedSessionDelayMs);
+    connect(&m_abandonedSessionTimer, &QTimer::timeout, &m_ipcServer, &IpcServer::releaseAbandonedSession);
+
     // Create the server and listen outside of QtRO
     m_server = QSharedPointer<QLocalServer>(new QLocalServer(this));
     m_server->setSocketOptions(QLocalServer::WorldAccessOption);
@@ -35,7 +40,16 @@ LocalServer::LocalServer(QObject *parent) : QObject(parent),
 
     QObject::connect(m_server.data(), &QLocalServer::newConnection, this, [this]() {
         qDebug() << "LocalServer new connection";
-        m_serverNode.addHostSideConnection(m_server->nextPendingConnection());
+        QLocalSocket *socket = m_server->nextPendingConnection();
+        m_abandonedSessionTimer.stop();
+        ++m_clientCount;
+        QObject::connect(socket, &QLocalSocket::disconnected, this, [this]() {
+            if (--m_clientCount <= 0) {
+                m_clientCount = 0;
+                m_abandonedSessionTimer.start();
+            }
+        });
+        m_serverNode.addHostSideConnection(socket);
 
         if (!m_isRemotingEnabled) {
             m_isRemotingEnabled = true;

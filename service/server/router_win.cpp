@@ -13,10 +13,6 @@ QList<QString> RouterWin::kIpv6Subnets = { "fc00::/7", "2000::/4", "3000::/4" };
 RouterWin &RouterWin::Instance()
 {
     static RouterWin s;
-    BOOL ok;
-    ok = s.EnableDebugPrivilege();
-    if (!ok) qDebug() << "RouterWin::Instance failed to EnableDebugPrivilege";
-
     return s;
 }
 
@@ -365,23 +361,6 @@ bool RouterWin::createTun(const QString &dev, const QString &subnet)
     }
 
     return ctx.found;
-}
-
-BOOL RouterWin::EnableDebugPrivilege(VOID)
-{
-  HANDLE           hToken = NULL;
-  TOKEN_PRIVILEGES priv;
-
-  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES, &hToken))
-    return FALSE;
-
-  if (!LookupPrivilegeValueW(NULL, SE_DEBUG_NAME, &priv.Privileges[0].Luid))
-    return FALSE;
-
-  priv.PrivilegeCount           = 1;
-  priv.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-
-  return AdjustTokenPrivileges(hToken, FALSE, &priv, sizeof(priv), NULL, NULL);
 }
 
 bool RouterWin::updateResolvers(const QString& ifname, const QList<QHostAddress>& resolvers)

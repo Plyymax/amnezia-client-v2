@@ -210,6 +210,7 @@ ErrorCode XrayProtocol::start()
         dnsServers.append(dnsServer.toString());
     }
     amnezia::xrayRouting::resolveDnsInsideCore(xrayConfig, dnsServers);
+    amnezia::xrayRouting::blockLocalNetworkNoise(xrayConfig);
 
     xrayConfig.insert(amnezia::protocols::xray::logBlock,
                       QJsonObject { { amnezia::protocols::xray::logLevel, "warning" }, { "access", "none" } });

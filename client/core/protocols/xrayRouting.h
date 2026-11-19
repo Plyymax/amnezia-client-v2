@@ -12,6 +12,8 @@ namespace amnezia::xrayRouting
 
     void routeOnlySitesThroughProxy(QJsonObject &xrayConfig, const QJsonArray &domains, const QJsonArray &networks);
 
+    void blockLocalNetworkNoise(QJsonObject &xrayConfig);
+
     void resolveDnsInsideCore(QJsonObject &xrayConfig, const QStringList &dnsServers);
 }
 

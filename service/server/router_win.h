@@ -55,8 +55,6 @@ private:
     RouterWin(RouterWin const &) = delete;
     RouterWin& operator= (RouterWin const&) = delete;
 
-    BOOL EnableDebugPrivilege();
-
     QNetworkInterface findLoopbackIface();
 
 private:

@@ -1,4 +1,5 @@
 #include "xray.h"
+#include "core/utils/constants/protocolConstants.h"
 #include "core/utils/networkUtilities.h"
 #ifdef Q_OS_MAC
 #include "router_mac.h"
@@ -34,12 +35,19 @@
 namespace
 {
     constexpr int pulseIntervalMs = 60000;
+#ifdef Q_OS_WIN
+    constexpr int uplinkCheckIntervalMs = 5000;
+#endif
 }
 
 Xray::Xray()
 {
     m_pulseTimer.setInterval(pulseIntervalMs);
     QObject::connect(&m_pulseTimer, &QTimer::timeout, [this]() { logPulse(); });
+#ifdef Q_OS_WIN
+    m_uplinkTimer.setInterval(uplinkCheckIntervalMs);
+    QObject::connect(&m_uplinkTimer, &QTimer::timeout, [this]() { refreshUplink(); });
+#endif
 }
 
 qint64 Xray::start(const QString &cfg)
@@ -62,6 +70,9 @@ qint64 Xray::start(const QString &cfg)
     m_errorLines = 0;
     m_runningTimer.start();
     m_pulseTimer.start();
+#ifdef Q_OS_WIN
+    m_uplinkTimer.start();
+#endif
     return m_currentToken;
 }
 
@@ -149,6 +160,9 @@ bool Xray::stopXray()
 {
     qInfo().noquote() << QString("[xray] stopping the core after %1 s").arg(m_runningTimer.isValid() ? m_runningTimer.elapsed() / 1000 : 0);
     m_pulseTimer.stop();
+#ifdef Q_OS_WIN
+    m_uplinkTimer.stop();
+#endif
     m_runningTimer.invalidate();
     bool success = true;
     if (auto err = amnezia_xray_stop(); err != nullptr) {
@@ -180,6 +194,26 @@ void Xray::logHandler(char* str)
     }, Qt::QueuedConnection);
 }
 
+#ifdef Q_OS_WIN
+void Xray::refreshUplink()
+{
+    const QNetworkInterface candidate = NetworkUtilities::getGatewayAndIface().second;
+    const int index = candidate.index();
+    if (index <= 0 || index == m_defaultIfaceIdx.load()) {
+        return;
+    }
+
+    for (const QNetworkAddressEntry &entry : candidate.addressEntries()) {
+        if (entry.ip().toString() == amnezia::protocols::xray::defaultLocalAddr) {
+            return;
+        }
+    }
+
+    qInfo().noquote() << QString("[xray] uplink interface changed to %1 (%2)").arg(candidate.name()).arg(index);
+    m_defaultIfaceIdx = index;
+}
+#endif
+
 void Xray::logPulse()
 {
     qInfo().noquote() << QString("[pulse] xray core running for %1 s, outbound sockets opened in the last %2 s: %3, core warnings: %4, errors: %5")
@@ -196,9 +230,9 @@ void Xray::sockCallback(uintptr_t fd)
 {
     ++m_socketsOpened;
 #ifdef Q_OS_MAC
-    if (m_defaultIfaceIdx > 0) {
-        setsockopt(fd, IPPROTO_IP, IP_BOUND_IF, &m_defaultIfaceIdx, sizeof(m_defaultIfaceIdx));
-        setsockopt(fd, IPPROTO_IPV6, IPV6_BOUND_IF, &m_defaultIfaceIdx, sizeof(m_defaultIfaceIdx));
+    if (int idx = m_defaultIfaceIdx; idx > 0) {
+        setsockopt(fd, IPPROTO_IP, IP_BOUND_IF, &idx, sizeof(idx));
+        setsockopt(fd, IPPROTO_IPV6, IPV6_BOUND_IF, &idx, sizeof(idx));
     }
 #endif
 #ifdef Q_OS_WIN

@@ -269,6 +269,23 @@ bool IpcServer::stopNetworkCheck()
     return true;
 }
 
+void IpcServer::releaseAbandonedSession()
+{
+    if (Xray::getInstance().currentToken() == 0) {
+        return;
+    }
+
+    qWarning() << "[ipc] the client is gone while xray is still running, releasing the session";
+    Xray::getInstance().stopAny();
+    for (ProcessDescriptor &descriptor : m_processes) {
+        descriptor.ipcProcess->kill();
+    }
+    Router::StartRoutingIpv6();
+    Router::restoreResolvers();
+    Router::clearSavedRoutes();
+    KillSwitch::instance()->disableKillSwitch();
+}
+
 bool IpcServer::resetKillSwitchAllowedRange(QStringList ranges)
 {
 #ifdef MZ_DEBUG

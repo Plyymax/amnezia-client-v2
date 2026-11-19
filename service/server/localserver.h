@@ -6,6 +6,7 @@
 #include <QProcess>
 #include <QSharedPointer>
 #include <QStringList>
+#include <QTimer>
 #include <QVector>
 
 #include "ipcserver.h"
@@ -40,6 +41,8 @@ public:
     IpcServer m_ipcServer;
     QRemoteObjectHost m_serverNode;
     bool m_isRemotingEnabled = false;
+    int m_clientCount = 0;
+    QTimer m_abandonedSessionTimer;
 
     NetworkWatcher m_networkWatcher;
 #ifdef Q_OS_LINUX

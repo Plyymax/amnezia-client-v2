@@ -130,6 +130,25 @@ private slots:
         QCOMPARE(config.value("outbounds").toArray().size(), outboundsAfterFirst);
     }
 
+    void localNoiseIsBlockedFirstWithOneBlackholeOutbound()
+    {
+        QJsonObject config = vlessConfig();
+        xrayRouting::resolveDnsInsideCore(config, { "1.1.1.1" });
+        xrayRouting::blockLocalNetworkNoise(config);
+        xrayRouting::blockLocalNetworkNoise(config);
+
+        const QJsonArray result = rules(config);
+        QCOMPARE(result.first().toObject().value("port").toString(), QString("135,137-139,5353"));
+        QCOMPARE(result.first().toObject().value("outboundTag").toString(), QString("block-local"));
+        QVERIFY(result.at(1).toObject().value("ip").toArray().contains("224.0.0.0/3"));
+
+        int blackholes = 0;
+        for (const QJsonValue &outbound : config.value("outbounds").toArray()) {
+            blackholes += outbound.toObject().value("protocol").toString() == QLatin1String("blackhole");
+        }
+        QCOMPARE(blackholes, 1);
+    }
+
     void applyingToCopyDoesNotGrowOriginal()
     {
         const QJsonObject original = vlessConfig();
@@ -137,7 +156,8 @@ private slots:
             QJsonObject copy = original;
             xrayRouting::routeOnlySitesThroughProxy(copy, QJsonArray { "example.com" }, {});
             xrayRouting::resolveDnsInsideCore(copy, { "1.1.1.1" });
-            QCOMPARE(rules(copy).size(), 3);
+            xrayRouting::blockLocalNetworkNoise(copy);
+            QCOMPARE(rules(copy).size(), 5);
         }
     }
 };

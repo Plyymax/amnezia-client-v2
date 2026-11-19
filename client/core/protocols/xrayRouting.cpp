@@ -5,6 +5,7 @@
 namespace
 {
     const QString dnsOutboundTag = QStringLiteral("dns-out");
+    const QString blockOutboundTag = QStringLiteral("block-local");
 
     QString directOutboundTag(QJsonArray &outbounds)
     {
@@ -129,6 +130,28 @@ namespace amnezia::xrayRouting
         QJsonArray rules = prependRules(ownRules, routing.value("rules").toArray());
         rules.append(QJsonObject { { "type", "field" }, { "network", "tcp,udp" }, { "outboundTag", directTag } });
         routing.insert("rules", rules);
+        xrayConfig.insert("routing", routing);
+    }
+
+    void blockLocalNetworkNoise(QJsonObject &xrayConfig)
+    {
+        QJsonArray outbounds = xrayConfig.value("outbounds").toArray();
+        if (!hasOutboundTag(outbounds, blockOutboundTag)) {
+            outbounds.append(QJsonObject { { "protocol", "blackhole" }, { "tag", blockOutboundTag } });
+            xrayConfig.insert("outbounds", outbounds);
+        }
+
+        const QJsonArray noiseRules {
+            QJsonObject { { "type", "field" },
+                          { "network", "udp" },
+                          { "port", "135,137-139,5353" },
+                          { "outboundTag", blockOutboundTag } },
+            QJsonObject { { "type", "field" },
+                          { "ip", QJsonArray { "224.0.0.0/3", "ff00::/8" } },
+                          { "outboundTag", blockOutboundTag } },
+        };
+        QJsonObject routing = xrayConfig.value("routing").toObject();
+        routing.insert("rules", prependRules(noiseRules, routing.value("rules").toArray()));
         xrayConfig.insert("routing", routing);
     }
 

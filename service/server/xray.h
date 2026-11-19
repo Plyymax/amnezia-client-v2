@@ -53,7 +53,12 @@ private:
 #ifdef Q_OS_LINUX
     QByteArray m_defaultIfaceName;
 #else
-    int m_defaultIfaceIdx;
+    std::atomic<int> m_defaultIfaceIdx { 0 };
+#endif
+
+#ifdef Q_OS_WIN
+    QTimer m_uplinkTimer;
+    void refreshUplink();
 #endif
 
 #ifdef Q_OS_MAC
