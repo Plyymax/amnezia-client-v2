@@ -46,6 +46,11 @@ namespace
         return QMetaEnum::fromType<Vpn::ConnectionState>().valueToKey(state);
     }
 
+    bool isXrayContainer(DockerContainer container)
+    {
+        return container == DockerContainer::Xray || container == DockerContainer::SSXray;
+    }
+
     QString formatDuration(qint64 ms)
     {
         const qint64 seconds = ms / 1000;
@@ -172,8 +177,10 @@ void VpnConnection::onConnectionStateChanged(Vpn::ConnectionState state)
                         iface->routeDeleteList(m_vpnProtocol->vpnGateway(), QStringList() << "0.0.0.0");
                         RouteMode routeMode = m_appSettingsRepository->routeMode();
                         if (routeMode == amnezia::RouteMode::VpnOnlyForwardSites) {
-                            QTimer::singleShot(1000, m_vpnProtocol.data(),
-                                               [this, routeMode]() { addSitesRoutes(m_vpnProtocol->vpnGateway(), routeMode); });
+                            if (!isXrayContainer(container)) {
+                                QTimer::singleShot(1000, m_vpnProtocol.data(),
+                                                   [this, routeMode]() { addSitesRoutes(m_vpnProtocol->vpnGateway(), routeMode); });
+                            }
                         } else if (routeMode == amnezia::RouteMode::VpnAllExceptSites) {
                             iface->routeAddList(m_vpnProtocol->vpnGateway(), QStringList() << "0.0.0.0/1");
                             iface->routeAddList(m_vpnProtocol->vpnGateway(), QStringList() << "128.0.0.0/1");
@@ -378,7 +385,7 @@ void VpnConnection::connectToVpn(const QString &serverId, DockerContainer contai
     appendKillSwitchConfig();
 #endif
 
-    appendSplitTunnelingConfig();
+    appendSplitTunnelingConfig(container);
 
 #if !defined(Q_OS_ANDROID) && !defined(Q_OS_IOS) && !defined(MACOS_NE)
     m_vpnProtocol.reset(VpnProtocol::factory(container, m_vpnConfiguration));
@@ -438,7 +445,7 @@ void VpnConnection::appendKillSwitchConfig()
     m_vpnConfiguration.insert(configKey::allowedDnsServers, QVariant(m_appSettingsRepository->getAllowedDnsServers()).toJsonValue());
 }
 
-void VpnConnection::appendSplitTunnelingConfig()
+void VpnConnection::appendSplitTunnelingConfig(DockerContainer container)
 {
     if (!m_appSettingsRepository) {
         qCritical() << "VpnConnection::appendSplitTunnelingConfig: repositories not initialized";
@@ -522,12 +529,17 @@ void VpnConnection::appendSplitTunnelingConfig()
                 sitesJsonArray.append(site);
             }
 
-            if (sitesJsonArray.isEmpty()) {
+            const bool hasRoutedSites = !sitesJsonArray.isEmpty() || (isXrayContainer(container) && !domainsJsonArray.isEmpty());
+            if (!hasRoutedSites) {
                 routeMode = amnezia::RouteMode::VpnAllSites;
             } else if (routeMode == amnezia::RouteMode::VpnOnlyForwardSites) {
                 // Allow traffic to Amnezia DNS
-                sitesJsonArray.append(m_vpnConfiguration.value(configKey::dns1).toString());
-                sitesJsonArray.append(m_vpnConfiguration.value(configKey::dns2).toString());
+                for (const QLatin1String dnsKey : { configKey::dns1, configKey::dns2 }) {
+                    const QString dns = m_vpnConfiguration.value(dnsKey).toString();
+                    if (!dns.isEmpty()) {
+                        sitesJsonArray.append(dns);
+                    }
+                }
             }
         }
     }

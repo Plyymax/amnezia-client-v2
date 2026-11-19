@@ -2,6 +2,7 @@
 
 #include "core/models/protocols/xrayProtocolConfig.h"
 #include "core/protocols/protocolUtils.h"
+#include "core/protocols/xrayRouting.h"
 #include "core/utils/constants/configKeys.h"
 #include "core/utils/constants/protocolConstants.h"
 #include "core/utils/ipcClient.h"
@@ -116,88 +117,6 @@ void pinServerAddress(QJsonObject &xrayConfig, const QString &hostName, const QS
         xrayConfig.insert("dns", dns);
     }
 }
-
-QString proxyOutboundTag(QJsonArray &outbounds)
-{
-    for (int i = 0; i < outbounds.size(); ++i) {
-        QJsonObject outbound = outbounds.at(i).toObject();
-        const QJsonObject settings = outbound.value("settings").toObject();
-        if (!settings.contains("vnext") && !settings.contains("servers")) {
-            continue;
-        }
-        if (outbound.value("tag").toString().isEmpty()) {
-            outbound.insert("tag", "proxy");
-            outbounds[i] = outbound;
-        }
-        return outbound.value("tag").toString();
-    }
-    return {};
-}
-
-QString directOutboundTag(QJsonArray &outbounds)
-{
-    for (const QJsonValue &value : outbounds) {
-        const QJsonObject outbound = value.toObject();
-        if (outbound.value("protocol").toString() == QLatin1String("freedom") && !outbound.value("tag").toString().isEmpty()) {
-            return outbound.value("tag").toString();
-        }
-    }
-    outbounds.append(QJsonObject { { "protocol", "freedom" }, { "tag", "direct" } });
-    return "direct";
-}
-
-void enableSniffing(QJsonObject &xrayConfig)
-{
-    QJsonArray inbounds = xrayConfig.value("inbounds").toArray();
-    for (int i = 0; i < inbounds.size(); ++i) {
-        QJsonObject inbound = inbounds.at(i).toObject();
-        inbound.insert("sniffing", QJsonObject { { "enabled", true },
-                                                 { "destOverride", QJsonArray { "http", "tls", "quic" } },
-                                                 { "routeOnly", true } });
-        inbounds[i] = inbound;
-    }
-    xrayConfig.insert("inbounds", inbounds);
-}
-
-void routeOnlySitesThroughProxy(QJsonObject &xrayConfig, const QJsonArray &domains, const QJsonArray &networks)
-{
-    QJsonArray outbounds = xrayConfig.value("outbounds").toArray();
-    const QString proxyTag = proxyOutboundTag(outbounds);
-    if (proxyTag.isEmpty()) {
-        return;
-    }
-    const QString directTag = directOutboundTag(outbounds);
-    xrayConfig.insert("outbounds", outbounds);
-
-    enableSniffing(xrayConfig);
-
-    QJsonArray domainMatchers;
-    for (const QJsonValue &value : domains) {
-        QString domain = value.toString().trimmed().toLower();
-        if (domain.startsWith(QLatin1String("*."))) {
-            domain = domain.mid(2);
-        }
-        if (!domain.isEmpty()) {
-            domainMatchers.append(QStringLiteral("domain:") + domain);
-        }
-    }
-
-    QJsonArray rules;
-    if (!domainMatchers.isEmpty()) {
-        rules.append(QJsonObject { { "type", "field" }, { "domain", domainMatchers }, { "outboundTag", proxyTag } });
-    }
-    if (!networks.isEmpty()) {
-        rules.append(QJsonObject { { "type", "field" }, { "ip", networks }, { "outboundTag", proxyTag } });
-    }
-
-    QJsonObject routing = xrayConfig.value("routing").toObject();
-    for (const QJsonValue &rule : routing.value("rules").toArray()) {
-        rules.append(rule);
-    }
-    rules.append(QJsonObject { { "type", "field" }, { "network", "tcp,udp" }, { "outboundTag", directTag } });
-    routing.insert("rules", rules);
-    xrayConfig.insert("routing", routing);
-}
 } // namespace
 
 XrayProtocol::XrayProtocol(const QJsonObject &configuration, QObject *parent) : VpnProtocol(configuration, parent)
@@ -269,18 +188,34 @@ ErrorCode XrayProtocol::start()
     m_socksPassword = creds.password;
     m_socksPort = creds.port;
 
-    pinServerAddress(m_xrayConfig, m_rawConfig.value(amnezia::configKey::hostName).toString(), m_remoteAddress);
-
-    if (m_routeMode == amnezia::RouteMode::VpnOnlyForwardSites) {
-        routeOnlySitesThroughProxy(m_xrayConfig, m_rawConfig.value(amnezia::configKey::splitTunnelDomains).toArray(),
-                                   m_rawConfig.value(amnezia::configKey::splitTunnelSites).toArray());
+    const QString hostName = m_rawConfig.value(amnezia::configKey::hostName).toString();
+    if (m_remoteAddress.isEmpty()) {
+        m_remoteAddress = NetworkUtilities::getIPAddress(hostName);
+    }
+    if (m_remoteAddress.isEmpty()) {
+        qCritical() << "[xray] the server address could not be resolved";
+        return ErrorCode::InternalError;
     }
 
-    m_xrayConfig.insert(amnezia::protocols::xray::logBlock,
-                        QJsonObject { { amnezia::protocols::xray::logLevel, "debug" }, { "access", "none" } });
-    qInfo() << "[xray] starting the core, log level debug";
+    QJsonObject xrayConfig = m_xrayConfig;
+    pinServerAddress(xrayConfig, hostName, m_remoteAddress);
 
-    QString xrayConfigStr = QJsonDocument(m_xrayConfig).toJson(QJsonDocument::Compact);
+    if (m_routeMode == amnezia::RouteMode::VpnOnlyForwardSites) {
+        amnezia::xrayRouting::routeOnlySitesThroughProxy(xrayConfig, m_rawConfig.value(amnezia::configKey::splitTunnelDomains).toArray(),
+                                                         m_rawConfig.value(amnezia::configKey::splitTunnelSites).toArray());
+    }
+
+    QStringList dnsServers;
+    for (const QHostAddress &dnsServer : std::as_const(m_dnsServers)) {
+        dnsServers.append(dnsServer.toString());
+    }
+    amnezia::xrayRouting::resolveDnsInsideCore(xrayConfig, dnsServers);
+
+    xrayConfig.insert(amnezia::protocols::xray::logBlock,
+                      QJsonObject { { amnezia::protocols::xray::logLevel, "warning" }, { "access", "none" } });
+    qInfo() << "[xray] starting the core, log level warning";
+
+    QString xrayConfigStr = QJsonDocument(xrayConfig).toJson(QJsonDocument::Compact);
     if (xrayConfigStr.isEmpty()) {
         qCritical() << "Xray config is empty";
         return ErrorCode::XrayExecutableCrashed;
@@ -366,7 +301,7 @@ ErrorCode XrayProtocol::startTun2Socks()
     const QString proxyUrl = QString("socks5://%1:%2@127.0.0.1:%3").arg(m_socksUser, m_socksPassword, QString::number(m_socksPort));
 
     m_tun2socksProcess->setProgram(PermittedProcess::Tun2Socks);
-    m_tun2socksProcess->setArguments({ "-device", QString("tun://%1").arg(tunName), "-proxy", proxyUrl, "-loglevel", "debug" });
+    m_tun2socksProcess->setArguments({ "-device", QString("tun://%1").arg(tunName), "-proxy", proxyUrl });
 
     connect(
             m_tun2socksProcess.data(), &IpcProcessInterfaceReplica::readyReadStandardError, this, 
@@ -385,7 +320,9 @@ ErrorCode XrayProtocol::startTun2Socks()
                 appendTun2SocksOutput(output);
 
                 for (const QString &line : output.split('\n', Qt::SkipEmptyParts)) {
-                    qDebug() << "[tun2socks]:" << line;
+                    if (!line.contains("[TCP]") && !line.contains("[UDP]")) {
+                        qDebug() << "[tun2socks]:" << line;
+                    }
                 }
 
                 if (output.contains("[STACK] tun://") && output.contains("<-> socks5://")) {
@@ -508,6 +445,13 @@ ErrorCode XrayProtocol::setupRouting()
                 }
 
                 if (m_routeMode == amnezia::RouteMode::VpnAllSites || m_routeMode == amnezia::RouteMode::VpnOnlyForwardSites) {
+                    if (!m_routeGateway.isEmpty() && QHostAddress(m_remoteAddress).protocol() == QAbstractSocket::IPv4Protocol) {
+                        auto routeServer = iface->routeAddList(m_routeGateway, QStringList() << m_remoteAddress);
+                        if (!routeServer.waitForFinished() || routeServer.returnValue() != 1) {
+                            qWarning() << "[xray] failed to keep the server route on the physical gateway";
+                        }
+                    }
+
                     static const QStringList subnets = { "1.0.0.0/8",  "2.0.0.0/7",  "4.0.0.0/6",  "8.0.0.0/5",
                                                          "16.0.0.0/4", "32.0.0.0/3", "64.0.0.0/2", "128.0.0.0/1" };
 

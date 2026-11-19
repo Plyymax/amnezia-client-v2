@@ -106,7 +106,7 @@ private:
 
    void createProtocolConnections();
 
-   void appendSplitTunnelingConfig();
+   void appendSplitTunnelingConfig(DockerContainer container);
    void appendKillSwitchConfig();
 };
 
